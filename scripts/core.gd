@@ -1,4 +1,4 @@
-# 自動生成：core_src/*.gd をまとめたもの（直接編集しない。tools/build_core.sh で作り直す）
+# 自動生成：core_src/*.gd をまとめたもの（直接編集しない。tools/build_core.sh か publish.ps1 で作り直す）
 extends Node
 
 # ==================== k0_base.gd ====================
@@ -3250,10 +3250,13 @@ func cpuDiplomacy(nid: int) -> void:
 	var na = NAT(nid)
 	if not na.alive: return
 	_tp("desire")
+	await yieldMaybe()
 	desireTurn(nid)
 	_tp("faction")
+	await yieldMaybe()
 	cpuFaction(nid)
 	_tp("vassal")
+	await yieldMaybe()
 	var myLord = lordOf(nid)
 	if myLord != null:
 		cpuVassal(nid, myLord)
@@ -3271,6 +3274,7 @@ func cpuDiplomacy(nid: int) -> void:
 	for c in G.nations:
 		if c.alive and atWar(nid, c.id): myWars.append(c.id)
 	_tp("drift")
+	await yieldMaybe()
 	# 好感度の自然変動
 	for o in G.nations:
 		if o.id == nid or not o.alive: continue
@@ -3306,6 +3310,7 @@ func cpuDiplomacy(nid: int) -> void:
 		if aimsMe and d < 0 and st != "war" and f <= 25: continue
 		addFavor(nid, o.id, d)
 	_tp("peace")
+	await yieldMaybe()
 	# 和平を考える
 	for o in G.nations:
 		if o.id == nid or not o.alive or not atWar(nid, o.id): continue
@@ -3333,6 +3338,7 @@ func cpuDiplomacy(nid: int) -> void:
 		else:
 			dipReport("peace", nid, o.id, false, "戦勝点差 %d ／ 戦って%dターン" % [warEdge(nid, o.id), turns])
 	_tp("ally")
+	await yieldMaybe()
 	# 同盟（近くの国と、共通の敵がいる時だけ）
 	for o in G.nations:
 		if o.id == nid or not o.alive or relState(nid, o.id) != "peace": continue
@@ -3368,8 +3374,10 @@ func cpuDiplomacy(nid: int) -> void:
 			addFavor(nid, o.id, -2)
 			break
 	_tp("ties")
+	await yieldMaybe()
 	cpuPeaceTies(nid, P)
 	_tp("declare")
+	await yieldMaybe()
 	# 準備していた相手へ宣戦布告
 	for o in G.nations:
 		if o.id == nid or not o.alive: continue
@@ -3386,6 +3394,7 @@ func cpuDiplomacy(nid: int) -> void:
 		declareWar(nid, o.id)
 		return
 	_tp("prep")
+	await yieldMaybe()
 	# 開戦準備
 	for o in G.nations:
 		if o.alive and (atWar(nid, o.id) or isTense(nid, o.id)): return
@@ -4004,10 +4013,10 @@ func _tp(l: String) -> void:
 ## 計算が長く続いたら画面に順番を譲る（1コマを短く保つ）
 var SEGLOG = false
 var SEGS = {}
-var FRAME_MS = 25
+var FRAME_MS = 12
 func yieldMaybe() -> void:
 	var seg = Time.get_ticks_msec() - YIELD_AT
-	if SEGLOG and seg > 40 and seg < 1000:
+	if SEGLOG and seg > 90 and seg < 1000:
 		var st = get_stack()
 		var k = "%s:%d" % [st[1].function, st[1].line] if st.size() > 1 else "?"
 		SEGS[k] = SEGS.get(k, []) + [seg]
@@ -4512,7 +4521,7 @@ func cpuTurn(nid: int) -> void:
 	cpuPolicy(nid, P)
 	phase.call("外交")
 	await yieldMaybe()
-	cpuDiplomacy(nid)
+	await cpuDiplomacy(nid)
 	_tp("")
 	await flushDip()
 	if not na.alive: return
@@ -5096,6 +5105,7 @@ func beginGame() -> void:
 
 ## 自動進行（もう一度呼ぶと止まる）
 signal auto_changed(on: bool)
+var _turnEma = 0.0
 func toggleAuto() -> void:
 	if G == null or G.over != null: return
 	auto_on = not auto_on
@@ -5108,7 +5118,12 @@ func toggleAuto() -> void:
 			continue
 		var t0 = Time.get_ticks_msec()
 		await endTurn()
-		await sleep_ms(max(40, CFG.autoTurnMs - (Time.get_ticks_msec() - t0)))
+		# ターンの間隔をなめらかに：最近のターンの長さの平均（戦闘画面の時間は除く）に合わせて待つ
+		var el: int = Time.get_ticks_msec() - t0
+		var work: float = el - BATTLE_SPENT
+		_turnEma = work if _turnEma <= 0 else _turnEma * 0.8 + work * 0.2
+		var target: float = max(float(CFG.autoTurnMs), _turnEma * 0.95)
+		await sleep_ms(int(max(40, target - el)))
 	auto_on = false
 	UI.auto = false
 	auto_changed.emit(false)

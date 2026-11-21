@@ -163,10 +163,13 @@ func cpuDiplomacy(nid: int) -> void:
 	var na := NAT(nid)
 	if not na.alive: return
 	_tp("desire")
+	await yieldMaybe()
 	desireTurn(nid)
 	_tp("faction")
+	await yieldMaybe()
 	cpuFaction(nid)
 	_tp("vassal")
+	await yieldMaybe()
 	var myLord = lordOf(nid)
 	if myLord != null:
 		cpuVassal(nid, myLord)
@@ -184,6 +187,7 @@ func cpuDiplomacy(nid: int) -> void:
 	for c in G.nations:
 		if c.alive and atWar(nid, c.id): myWars.append(c.id)
 	_tp("drift")
+	await yieldMaybe()
 	# 好感度の自然変動
 	for o in G.nations:
 		if o.id == nid or not o.alive: continue
@@ -219,6 +223,7 @@ func cpuDiplomacy(nid: int) -> void:
 		if aimsMe and d < 0 and st != "war" and f <= 25: continue
 		addFavor(nid, o.id, d)
 	_tp("peace")
+	await yieldMaybe()
 	# 和平を考える
 	for o in G.nations:
 		if o.id == nid or not o.alive or not atWar(nid, o.id): continue
@@ -246,6 +251,7 @@ func cpuDiplomacy(nid: int) -> void:
 		else:
 			dipReport("peace", nid, o.id, false, "戦勝点差 %d ／ 戦って%dターン" % [warEdge(nid, o.id), turns])
 	_tp("ally")
+	await yieldMaybe()
 	# 同盟（近くの国と、共通の敵がいる時だけ）
 	for o in G.nations:
 		if o.id == nid or not o.alive or relState(nid, o.id) != "peace": continue
@@ -281,8 +287,10 @@ func cpuDiplomacy(nid: int) -> void:
 			addFavor(nid, o.id, -2)
 			break
 	_tp("ties")
+	await yieldMaybe()
 	cpuPeaceTies(nid, P)
 	_tp("declare")
+	await yieldMaybe()
 	# 準備していた相手へ宣戦布告
 	for o in G.nations:
 		if o.id == nid or not o.alive: continue
@@ -299,6 +307,7 @@ func cpuDiplomacy(nid: int) -> void:
 		declareWar(nid, o.id)
 		return
 	_tp("prep")
+	await yieldMaybe()
 	# 開戦準備
 	for o in G.nations:
 		if o.alive and (atWar(nid, o.id) or isTense(nid, o.id)): return

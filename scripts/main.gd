@@ -430,6 +430,8 @@ func _onStarted() -> void:
 	_hideTitle()
 	closeModal()
 	_natPickKey = ""
+	_natPickShape = ""
+	_sideLast = ""
 	map.setup()
 	map.fitView()
 	refresh()
@@ -582,6 +584,7 @@ func _dipCard(ev: Dictionary, K: Dictionary, A: Dictionary, B: Dictionary) -> vo
 	tw.tween_callback(p.queue_free)
 # ---------- 国を選ぶ ----------
 var _natPickKey = ""
+var _natPickShape = ""
 const REG := [["北海道・東北", 0, 6], ["関東", 7, 13], ["中部", 14, 22], ["近畿", 23, 29], ["中国", 30, 34], ["四国", 35, 38], ["九州・沖縄", 39, 46]]
 func _syncNatPick() -> void:
 	var cnt = {}
@@ -589,6 +592,20 @@ func _syncNatPick() -> void:
 		if t.owner >= 0: cnt[t.owner] = cnt.get(t.owner, 0) + 1
 	var key = ""
 	for n in S.G.nations: key += (str(cnt.get(n.id, 0)) if n.alive else "-") + ","
+	if key != _natPickKey:
+		# 並び（滅亡の有無）が同じなら、項目の文字だけ書き換える（一覧を作り直さない）
+		var shape = ""
+		for n in S.G.nations: shape += "1" if n.alive else "0"
+		if shape == _natPickShape and natPick.item_count > 0:
+			_natPickKey = key
+			for i in natPickIds.size():
+				var nid2 = natPickIds[i]
+				if nid2 == null: continue
+				var n2 = S.NAT(nid2)
+				var tx = "%s%s%s" % [n2.name, ("＝" + n2.role) if n2.get("role", "") != "" else "", ("（%d）" % cnt.get(n2.id, 0)) if n2.alive else "（滅亡）"]
+				if natPick.get_item_text(i) != tx: natPick.set_item_text(i, tx)
+			key = _natPickKey
+		_natPickShape = shape
 	if key != _natPickKey:
 		_natPickKey = key
 		natPick.clear()
@@ -655,12 +672,20 @@ func _onHover(id: int, p: Vector2) -> void:
 # ============================================================
 #   右の欄
 # ============================================================
+var _sideLast = ""
 func _renderSide() -> void:
 	var h = ""
 	if S.UI.selNat != null: h += natPanel(S.UI.selNat)
 	if S.UI.sel != null: h += wildPanel(S.T(S.UI.sel))
 	if h == "": h = worldPanel()
+	# 中身が同じなら差し替えない。差し替える時はスクロールの位置を保つ（毎ターン上へ戻らないように）
+	if h == _sideLast: return
+	_sideLast = h
+	var keep = sideScroll.scroll_vertical
 	side.text = h
+	if keep > 0:
+		await get_tree().process_frame
+		if is_instance_valid(sideScroll): sideScroll.scroll_vertical = keep
 func _h3(t: String, col := "eae4d6") -> String: return "[font=res://fonts/ShipporiMinchoB1-SemiBold.ttf][font_size=19][color=#%s]%s[/color][/font_size][/font]" % [col, t]
 func _chip(t: String, col := "9b9484") -> String: return " [bgcolor=#252b38][color=#%s][font_size=11] %s [/font_size][/color][/bgcolor]" % [col, t]
 func _lbl(t: String, col := "9b9484") -> String: return "\n[font_size=11][color=#%s]%s[/color][/font_size]" % [col, t]

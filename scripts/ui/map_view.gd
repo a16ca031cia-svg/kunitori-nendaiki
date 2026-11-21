@@ -635,7 +635,7 @@ func natBorder(nid: int) -> Array:
 				var j: int = t.segN[i]
 				if j >= 0 and S.T(j).owner == t.owner: continue
 				if not _nbCache.has(t.owner): _nbCache[t.owner] = []
-				_nbCache[t.owner].append(_smooth(t.segs[i]))
+				_nbCache[t.owner].append(_pairsOf(t, i))
 	return _nbCache.get(nid, [])
 func natRel(from: int, nid: int) -> String:
 	if from == nid: return "self"
@@ -647,8 +647,12 @@ func _drawRel() -> void:
 	if S.G == null: return
 	var sel = S.UI.selNat
 	if sel == null or sel < 0: return
-	var under = Batch.new()
-	var over = Batch.new()
+	# 境目の線は国境と同じものを使い回し、本体の線描画でまとめて描く（自国は太く、ほかは同じ太さ）
+	var Ps := PackedVector2Array()
+	var Cs := PackedColorArray()
+	var Po := PackedVector2Array()
+	var Co := PackedColorArray()
+	var dash = Batch.new()
 	for na in S.G.nations:
 		if not na.alive: continue
 		var rel = natRel(sel, na.id)
@@ -656,13 +660,33 @@ func _drawRel() -> void:
 		var lines = natBorder(na.id)
 		if rel != "peace":
 			var c = Color(RELC[rel])
-			for ln in lines:
-				under.polyline(ln, (8.0 if rel == "self" else 6.0) / vs, Color(0.08, 0.06, 0.04, 0.55))
-				over.polyline(ln, (4.5 if rel == "self" else 3.2) / vs, c)
+			var P: PackedVector2Array = Ps if rel == "self" else Po
+			var C: PackedColorArray = Cs if rel == "self" else Co
+			for pr in lines:
+				P.append_array(pr)
+				for q in pr.size() / 2: C.append(c)
+			if rel == "self":
+				Ps = P
+				Cs = C
+			else:
+				Po = P
+				Co = C
 		else:
-			for ln in lines: _dashed(over, ln, Color("#4f7fa8"), 3.0 / vs, 10.0 / vs, 8.0 / vs)
-	under.flush(relL.get_canvas_item())
-	over.flush(relL.get_canvas_item())
+			for pr in lines:
+				var ln := PackedVector2Array([pr[0]])
+				for q in range(1, pr.size(), 2): ln.append(pr[q])
+				_dashed(dash, ln, Color("#4f7fa8"), 3.0 / vs, 10.0 / vs, 8.0 / vs)
+	var ci = relL.get_canvas_item()
+	var shade := PackedColorArray([Color(0.08, 0.06, 0.04, 0.55)])
+	if Po.size():
+		RenderingServer.canvas_item_add_multiline(ci, Po, shade, 6.0 / vs)
+	if Ps.size():
+		RenderingServer.canvas_item_add_multiline(ci, Ps, shade, 8.0 / vs)
+	if Po.size():
+		RenderingServer.canvas_item_add_multiline(ci, Po, Co, 3.2 / vs)
+	if Ps.size():
+		RenderingServer.canvas_item_add_multiline(ci, Ps, Cs, 4.5 / vs)
+	dash.flush(ci)
 func _dashed(b, ln: PackedVector2Array, col: Color, w: float, on: float, off: float) -> void:
 	var acc = 0.0
 	var drawing = true
@@ -690,7 +714,7 @@ func _drawSel() -> void:
 		b.polyline(c, 2.4 / vs, Color("#f0cf55"))
 	b.flush(selL.get_canvas_item())
 var _siteSig = PackedByteArray()
-var _siteB = null
+var _siteParts = []
 var _siteG = null
 func _drawSites() -> void:
 	if S.G == null: return
@@ -702,14 +726,22 @@ func _drawSites() -> void:
 	sig.resize(S.G.terrs.size())
 	for t in S.G.terrs:
 		sig[t.id] = (1 if t.chaos > 0 else 0) | (2 if t.cap else 0) | (int(t.get("infra", 1)) << 2) | (int(t.dev) << 4) | (128 if t.type == "city" else 0)
-	if _siteB != null and sig == _siteSig and _siteG == S.G:
-		_siteB.flush(siteL.get_canvas_item())
-		return
-	_siteSig = sig
-	_siteG = S.G
-	var b = Batch.new()
-	_siteB = b
+	# 領地ごとに形を覚えておき、見た目の変わった領地だけ作り直す（描く時は領地ごとに本体へ渡す）
+	if _siteG != S.G or _siteSig.size() != sig.size():
+		_siteG = S.G
+		_siteParts = []
+		_siteParts.resize(sig.size())
+		_siteSig = PackedByteArray()
+		_siteSig.resize(sig.size())
+		for i in sig.size(): _siteSig[i] = 255
+	var ci = siteL.get_canvas_item()
 	for t in S.G.terrs:
+		if sig[t.id] == _siteSig[t.id] and _siteParts[t.id] != null:
+			_siteParts[t.id].flush(ci)
+			continue
+		_siteSig[t.id] = sig[t.id]
+		var b = Batch.new()
+		_siteParts[t.id] = b
 		var p = Vector2(t.x, t.y)
 		var city: bool = t.type == "city"
 		var r = rOf(t)
@@ -730,7 +762,7 @@ func _drawSites() -> void:
 			b.rect(Rect2(t.x + r + 2.5, t.y - 4 + k * 5, 6, 3), Color8(92, 64, 30, 217))
 		if t.cap:
 			b.ring(p, r + 5, 1.6, Color("#3a3020"), 24)
-	b.flush(siteL.get_canvas_item())
+		b.flush(ci)
 func _ring(c: CanvasItem, p: Vector2, r: float, col: Color, w: float, dash := 0.0) -> void:
 	if dash <= 0:
 		c.draw_arc(p, r, 0, TAU, 40, col, w)
@@ -865,7 +897,7 @@ func _drawArmies() -> void:
 		for i in min(6, all.size()):
 			var a: Dictionary = all[i]
 			var p = armyPos(a, i)
-			if S.UI.actArmy == a: b.ring(p, 22 + sin(Time.get_ticks_msec() / 180.0) * 3, 3, Color(1, 1, 1, 0.65), 24)
+			if S.UI.actArmy == a and a.owner == S.followNat(): b.ring(p, 22 + sin(Time.get_ticks_msec() / 180.0) * 3, 3, Color(1, 1, 1, 0.65), 24)
 			var pts = PackedVector2Array()
 			for q in _shieldPts: pts.append(q + p)
 			b.mesh(pts, _shieldIdx, Color(S.ncol(a.owner)))
@@ -930,8 +962,12 @@ func _process(_d: float) -> void:
 	if _kickD:
 		_kickD = false
 		svD.render_target_update_mode = SubViewport.UPDATE_ONCE
+var _animLast = 0
 func _animStep() -> void:
 	var now = Time.get_ticks_msec()
+	# 跡が消えていく動きの描き直しは 50ms に1回まで（毎コマ全軍団を描き直さない）
+	if now - _animLast < 50: return
+	_animLast = now
 	var live = false
 	for na in S.G.nations:
 		for a in na.armies:
@@ -940,7 +976,8 @@ func _animStep() -> void:
 				else: live = true
 	trails = trails.filter(func(x): return now - x.t0 < x.dur)
 	flashes = flashes.filter(func(x): return now - x.t0 < x.dur)
-	if trails.size() or flashes.size() or S.UI.actArmy != null: live = true
+	var aa = S.UI.actArmy
+	if trails.size() or flashes.size() or (aa != null and aa.owner == S.followNat()): live = true
 	fxL.queue_redraw()
 	armyL.queue_redraw()
 	_kickD = true

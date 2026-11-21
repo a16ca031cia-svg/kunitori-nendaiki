@@ -37,6 +37,7 @@ func beginGame() -> void:
 
 ## 自動進行（もう一度呼ぶと止まる）
 signal auto_changed(on: bool)
+var _turnEma := 0.0
 func toggleAuto() -> void:
 	if G == null or G.over != null: return
 	auto_on = not auto_on
@@ -49,7 +50,12 @@ func toggleAuto() -> void:
 			continue
 		var t0 := Time.get_ticks_msec()
 		await endTurn()
-		await sleep_ms(max(40, CFG.autoTurnMs - (Time.get_ticks_msec() - t0)))
+		# ターンの間隔をなめらかに：最近のターンの長さの平均（戦闘画面の時間は除く）に合わせて待つ
+		var el: int = Time.get_ticks_msec() - t0
+		var work: float = el - BATTLE_SPENT
+		_turnEma = work if _turnEma <= 0 else _turnEma * 0.8 + work * 0.2
+		var target: float = max(float(CFG.autoTurnMs), _turnEma * 0.95)
+		await sleep_ms(int(max(40, target - el)))
 	auto_on = false
 	UI.auto = false
 	auto_changed.emit(false)

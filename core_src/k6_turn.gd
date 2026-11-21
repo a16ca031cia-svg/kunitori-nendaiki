@@ -31,10 +31,10 @@ func _tp(l: String) -> void:
 ## 計算が長く続いたら画面に順番を譲る（1コマを短く保つ）
 var SEGLOG := false
 var SEGS := {}
-var FRAME_MS := 25
+var FRAME_MS := 12
 func yieldMaybe() -> void:
 	var seg := Time.get_ticks_msec() - YIELD_AT
-	if SEGLOG and seg > 40 and seg < 1000:
+	if SEGLOG and seg > 90 and seg < 1000:
 		var st := get_stack()
 		var k := "%s:%d" % [st[1].function, st[1].line] if st.size() > 1 else "?"
 		SEGS[k] = SEGS.get(k, []) + [seg]
@@ -539,7 +539,7 @@ func cpuTurn(nid: int) -> void:
 	cpuPolicy(nid, P)
 	phase.call("外交")
 	await yieldMaybe()
-	cpuDiplomacy(nid)
+	await cpuDiplomacy(nid)
 	_tp("")
 	await flushDip()
 	if not na.alive: return
