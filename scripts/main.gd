@@ -1467,7 +1467,8 @@ func openVolume() -> void:
 			S.savePrefs())
 		vb.add_child(hb)
 	var note = _rtl()
-	note.text = "[font_size=12][color=#9b9484]0 にするとその音は鳴りません。メニューの「音楽」「効果音」でも入り切りできます。[/color][/font_size]"
+	note.custom_minimum_size = Vector2(360, 0)
+	note.text = "[font_size=12][color=#9b9484]つまみを左の端まで下げると、その音は鳴りません。メニューの「音楽」「効果音」でも入り切りできます。[/color][/font_size]"
 	vb.add_child(note)
 	modal("音量", vb, [_btn("閉じる", closeModal, true)], 420)
 ## 効果音（同じ音は短い間に重ねて鳴らさない）
@@ -1764,6 +1765,7 @@ func _armyEval(runs: int, turns: int, seedBase := 7000) -> void:
 	var score: float = (T0.leave * 2.0 + T0.back * 3.0 + T0.loop * 2.0 + T0.waste * 2.0 + T0.idleWar * 1.0) / at * 100.0
 	print("SUM 移動=%d 平時=%d 平時の古い軍=%d 持ち場を離れる=%d 行き戻り=%d 輪=%d 変更=%d 棒立ち=%d 占領=%d 戦国ターン=%d 軍ターン=%d" % [T0.moves, T0.peace, T0.peaceOld, T0.leave, T0.back, T0.loop, T0.waste, T0.idleWar, T0.cap, T0.warTurns, T0.armyTurns])
 	print("SCORE 無駄=%.2f（軍100ターンあたり・小さいほど良い） 占領/戦争100国ターン=%.1f" % [score, T0.cap / wt * 100.0])
+	print("SCORE2 戦時の無駄=%.2f（戦争1国ターンあたり） 平時の無駄=%.3f（軍100ターンあたり）" % [(T0.back * 3.0 + T0.loop * 2.0 + T0.waste * 2.0 + T0.idleWar) / wt, T0.leave * 2.0 / at * 100.0])
 ## 守備の持ち場（国境の要所・首都）にいるか
 func _atPost(a, nid: int) -> bool:
 	var t = S.T(a.at)
