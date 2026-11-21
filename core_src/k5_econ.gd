@@ -22,8 +22,7 @@ func linkBonus(t: Dictionary) -> float:
 	return CFG.roadBonus[l] + (0.10 if t.get("trait") == "road" and t.get("link", 0) else 0.0)
 func foodGain(nid: int) -> int:
 	var f := 0.0
-	for t in G.terrs:
-		if t.owner == nid: f += bldCount(t, "farm") * CFG.farmOut * (1.3 if t.get("trait") == "fertile" else 1.0) * terrOf(t).food
+	for t in ownList(nid): f += bldCount(t, "farm") * CFG.farmOut * (1.3 if t.get("trait") == "fertile" else 1.0) * terrOf(t).food
 	return int(round(f))
 func traitTroop(t: Dictionary, k: String) -> float:
 	var m: float = terrOf(t).troop.get(k, 1.0)
@@ -49,8 +48,7 @@ func foeNbrs(t: Dictionary, nid: int) -> int:
 	return n
 func _natPop(nid: int) -> float:
 	var pop := 0.0
-	for t in G.terrs:
-		if t.owner == nid: pop += t.pop
+	for t in ownList(nid): pop += t.pop
 	return pop
 func stockCap(nid: int) -> int: return int(round(_natPop(nid) * CFG.stockCapPop))
 func levyRoom(t: Dictionary) -> int: return max(0, int(round(t.pop - popCap(t) * CFG.levyFloor)))
@@ -124,8 +122,7 @@ func revolt(t: Dictionary, na: Dictionary) -> void:
 # ---------- 開拓 ----------
 func settleCost(nid: int) -> int:
 	var n := 0
-	for t in G.terrs:
-		if t.owner == nid: n += 1
+	for t in ownList(nid): n += 1
 	return int(round(FRONT.settleGold + n * FRONT.settleGrow))
 func settlingOf(nid: int) -> Array:
 	var r := []

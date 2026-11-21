@@ -219,9 +219,7 @@ func cpuDanger(nid: int) -> float:
 			foe += nationPower(o.id) * (1.0 if adj else 0.4)
 		elif adj and (isTense(nid, o.id) or isTopThreat(o.id)):
 			nearFoe += nationPower(o.id) * 0.5
-	var own := 0
-	for t in G.terrs:
-		if t.owner == nid: own += 1
+	var own := ownCount(nid)
 	var d: float = min(1.9, (foe + nearFoe) / mine * 0.5)
 	d += max(0, wars - 1) * 0.18
 	d += na.get("fatigue", 0) / 180.0
@@ -306,8 +304,7 @@ func landValue(t: Dictionary) -> float:
 	return t.pop / 1000.0 + t.dev * 4 + (12 if ["fertile", "iron", "horse", "trade", "dense"].has(t.get("trait")) else 0) + (15 if t.cap else 0)
 func borderTargets(nid: int) -> Array:
 	var out := {}
-	for t in G.terrs:
-		if t.owner != nid: continue
+	for t in ownList(nid):
 		for n in roadNbrs(t.id):
 			var o: int = T(n.to).owner
 			if o >= 0 and o != nid: out[n.to] = true

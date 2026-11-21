@@ -310,8 +310,7 @@ func cpuDiplomacy(nid: int) -> void:
 	if na.food <= 0: return
 	if smartAI(nid):
 		var ownN := 0
-		for t in G.terrs:
-			if t.owner == nid: ownN += 1
+		for t in ownList(nid): ownN += 1
 		var goalT: float = clamp_f(3500 + ownN * 700, 3500, 34000) * P.goal
 		if nationTroops(nid) < goalT * 2: return
 	var des := desiresOf(nid)

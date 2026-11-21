@@ -984,18 +984,50 @@ func refreshSupply(force := false) -> void:
 var PW_CACHE = {}
 var PW_KEY = ""
 func powKey() -> String: return str(G.turn) + "_" + str(G.get("ownRev", 0))
+## 国力：鍵（ターン・持ち主の変化）が変わったら、全領地を1回だけなめて全部の国をまとめて計算する
+var OWN_N = {}
+var OWN_L = {}
+var NO_OWNL: bool = OS.get_environment("KN_NOOWNL") != ""
+func _powAll() -> void:
+	OWN_L = {}
+	PW_CACHE = {}
+	OWN_N = {}
+	PW_KEY = powKey()
+	var acc = {}
+	for t in G.terrs:
+		var o: int = t.owner
+		if o < 0: continue
+		if not OWN_L.has(o): OWN_L[o] = []
+		OWN_L[o].append(t)
+		var nb = 0
+		for b in t.bld:
+			if b: nb += 1
+		acc[o] = acc.get(o, 0.0) + t.dev * (120 if t.type == "city" else 80) + nb * 60 + t.pop * 0.006
+		OWN_N[o] = OWN_N.get(o, 0) + 1
+	for na in G.nations:
+		PW_CACHE[na.id] = round(acc.get(na.id, 0.0) + nationTroops(na.id) * 0.6 + na.gold * 0.05)
 func nationPower(nid: int) -> float:
-	if PW_KEY != powKey():
-		PW_CACHE = {}
-		PW_KEY = powKey()
+	if PW_KEY != powKey(): _powAll()
 	if PW_CACHE.has(nid): return PW_CACHE[nid]
 	var v = nationPowerCalc(nid)
 	PW_CACHE[nid] = v
 	return v
+## 自国の領地の一覧（全領地の並び順のまま。持ち主が変わると作り直す）
+func ownList(nid: int) -> Array:
+	if NO_OWNL:
+		var r = []
+		for t in G.terrs:
+			if t.owner == nid: r.append(t)
+		return r
+	if PW_KEY != powKey(): _powAll()
+	return OWN_L.get(nid, [])
+## 領地の数（国力と同じ鍵で覚えておく）
+func ownCount(nid: int) -> int:
+	if PW_KEY != powKey(): _powAll()
+	return OWN_N.get(nid, 0)
 func nationPowerCalc(nid: int) -> float:
 	var p = 0.0
-	for t in G.terrs:
-		if t.owner != nid: continue
+	for t in ownList(nid):
 		var nb = 0
 		for b in t.bld:
 			if b: nb += 1
@@ -2660,9 +2692,7 @@ func cpuDanger(nid: int) -> float:
 			foe += nationPower(o.id) * (1.0 if adj else 0.4)
 		elif adj and (isTense(nid, o.id) or isTopThreat(o.id)):
 			nearFoe += nationPower(o.id) * 0.5
-	var own = 0
-	for t in G.terrs:
-		if t.owner == nid: own += 1
+	var own = ownCount(nid)
 	var d: float = min(1.9, (foe + nearFoe) / mine * 0.5)
 	d += max(0, wars - 1) * 0.18
 	d += na.get("fatigue", 0) / 180.0
@@ -2747,8 +2777,7 @@ func landValue(t: Dictionary) -> float:
 	return t.pop / 1000.0 + t.dev * 4 + (12 if ["fertile", "iron", "horse", "trade", "dense"].has(t.get("trait")) else 0) + (15 if t.cap else 0)
 func borderTargets(nid: int) -> Array:
 	var out = {}
-	for t in G.terrs:
-		if t.owner != nid: continue
+	for t in ownList(nid):
 		for n in roadNbrs(t.id):
 			var o: int = T(n.to).owner
 			if o >= 0 and o != nid: out[n.to] = true
@@ -3368,8 +3397,7 @@ func cpuDiplomacy(nid: int) -> void:
 	if na.food <= 0: return
 	if smartAI(nid):
 		var ownN = 0
-		for t in G.terrs:
-			if t.owner == nid: ownN += 1
+		for t in ownList(nid): ownN += 1
 		var goalT: float = clamp_f(3500 + ownN * 700, 3500, 34000) * P.goal
 		if nationTroops(nid) < goalT * 2: return
 	var des = desiresOf(nid)
@@ -3590,8 +3618,7 @@ func linkBonus(t: Dictionary) -> float:
 	return CFG.roadBonus[l] + (0.10 if t.get("trait") == "road" and t.get("link", 0) else 0.0)
 func foodGain(nid: int) -> int:
 	var f = 0.0
-	for t in G.terrs:
-		if t.owner == nid: f += bldCount(t, "farm") * CFG.farmOut * (1.3 if t.get("trait") == "fertile" else 1.0) * terrOf(t).food
+	for t in ownList(nid): f += bldCount(t, "farm") * CFG.farmOut * (1.3 if t.get("trait") == "fertile" else 1.0) * terrOf(t).food
 	return int(round(f))
 func traitTroop(t: Dictionary, k: String) -> float:
 	var m: float = terrOf(t).troop.get(k, 1.0)
@@ -3617,8 +3644,7 @@ func foeNbrs(t: Dictionary, nid: int) -> int:
 	return n
 func _natPop(nid: int) -> float:
 	var pop = 0.0
-	for t in G.terrs:
-		if t.owner == nid: pop += t.pop
+	for t in ownList(nid): pop += t.pop
 	return pop
 func stockCap(nid: int) -> int: return int(round(_natPop(nid) * CFG.stockCapPop))
 func levyRoom(t: Dictionary) -> int: return max(0, int(round(t.pop - popCap(t) * CFG.levyFloor)))
@@ -3692,8 +3718,7 @@ func revolt(t: Dictionary, na: Dictionary) -> void:
 # ---------- 開拓 ----------
 func settleCost(nid: int) -> int:
 	var n = 0
-	for t in G.terrs:
-		if t.owner == nid: n += 1
+	for t in ownList(nid): n += 1
 	return int(round(FRONT.settleGold + n * FRONT.settleGrow))
 func settlingOf(nid: int) -> Array:
 	var r = []
@@ -4187,8 +4212,7 @@ func _evOk(na: Dictionary, ev: Dictionary, i: int) -> bool:
 	return na.gold >= o.get("need", 0)
 func _ownOf(nid: int) -> Array:
 	var r = []
-	for t in G.terrs:
-		if t.owner == nid: r.append(t)
+	for t in ownList(nid): r.append(t)
 	return r
 func _evRun(na: Dictionary, ev: Dictionary, i: int) -> String:
 	var own = _ownOf(na.id)
@@ -4327,8 +4351,7 @@ func recordHistory() -> void:
 # ---------- CPU ----------
 func prodPerTurn(nid: int) -> int:
 	var n = 0
-	for t in G.terrs:
-		if t.owner != nid: continue
+	for t in ownList(nid):
 		for b in t.bld:
 			var o = BLD_OUT.get(b) if b else null
 			if o == null: continue
@@ -4410,8 +4433,7 @@ func cpuObjective(nid: int, list: Array, bfsOf: Dictionary):
 func nearestOwnCity(_a, bs: Dictionary, nid: int):
 	var best = null
 	var bd = INF
-	for t in G.terrs:
-		if t.owner != nid: continue
+	for t in ownList(nid):
 		var d = bget(bs, t.id)
 		if d == null: continue
 		var w: float = d - (1 if t.type == "city" else 0) - (1 if t.cap else 0)
@@ -4486,6 +4508,7 @@ func cpuTurn(nid: int) -> void:
 		var shown = msg.get_slice(":", 0)
 		setPhase(nid, P.n + ((" ／ " + shown) if shown != "" else ""))
 	hoiTurn(nid)
+	phase.call("政策")
 	cpuPolicy(nid, P)
 	phase.call("外交")
 	await yieldMaybe()
@@ -5220,6 +5243,7 @@ const FOCUS_UNIQUE_X := 13   # 固有の枝を置く列
 
 # ---------- 初期化 ----------
 func hoiInit(g: Dictionary) -> void:
+	PW_KEY = ""
 	var gen = []
 	for sp in GENERIC_SPIRITS: gen.append(sp)
 	gen.shuffle()
@@ -5274,11 +5298,13 @@ func hoiInit(g: Dictionary) -> void:
 	# 最初の工場：首都に軍需・民需を1つずつ（工業県はもっと）
 	var G0 = G
 	G = g
+	PW_KEY = ""
 	for na in g.nations:
 		var ind = START_IND.get(na.name, [1, 1])
 		_buildFactories(na.id, "mf", ind[0], true)
 		_buildFactories(na.id, "cf", ind[1], true)
 	G = G0
+	PW_KEY = ""
 func _normPop(na: Dictionary) -> void:
 	var s = 0.0
 	for k in IDEO_KEYS: s += max(0.0, na.ipop.get(k, 0.0))
@@ -5311,8 +5337,7 @@ func stabMul(na: Dictionary) -> float: return clamp_f(0.75 + na.get("stab", 50.0
 ## 建設費の倍率（民需工場が多いほど安い）
 func costMul(nid: int) -> float:
 	var cf = 0
-	for t in G.terrs:
-		if t.owner == nid: cf += bldCount(t, "cf")
+	for t in ownList(nid): cf += bldCount(t, "cf")
 	return clamp_f(1.0 + nmod(nid, "build") - cf * 0.02, 0.6, 1.3)
 
 # ---------- 工場 ----------
@@ -5320,8 +5345,7 @@ func _buildFactories(nid: int, kind: String, n: int, start := false) -> int:
 	var made = 0
 	for k in n:
 		var cand = []
-		for t in G.terrs:
-			if t.owner != nid: continue
+		for t in ownList(nid):
 			var used = 0
 			for b in t.bld:
 				if b: used += 1
@@ -5351,8 +5375,7 @@ func _buildFactories(nid: int, kind: String, n: int, start := false) -> int:
 func factoryCount(nid: int) -> Array:
 	var mf = 0
 	var cf = 0
-	for t in G.terrs:
-		if t.owner != nid: continue
+	for t in ownList(nid):
 		mf += bldCount(t, "mf")
 		cf += bldCount(t, "cf")
 	return [mf, cf]
@@ -5362,19 +5385,25 @@ func hoiTurn(nid: int) -> void:
 	var na = NAT(nid)
 	if not na.alive or not na.has("ideo"): return
 	var ideo: Dictionary = IDEO[na.ideo]
+	var _h0 = Time.get_ticks_usec()
 	var war = inWar(nid)
 	var dg = cpuDanger(nid)
+	var _h1 = Time.get_ticks_usec()
+	PROF["hoi:危険度"] = PROF.get("hoi:危険度", 0) + _h1 - _h0
 	# 政治力
 	na.pp = min(300.0, na.pp + ideo.pp + nmod(nid, "pp"))
 	# 安定度と戦争支持は目標へ少しずつ寄る
 	var st: float = 55.0 + ideo.stab + nmod(nid, "stab") - na.get("fatigue", 0) * 0.3 - (15 if na.food <= 0 else 0) - (5 if lordOf(nid) != null else 0)
 	var ws: float = 25.0 + ideo.ws + nmod(nid, "ws") + dg * 30.0 + (10 if war else 0) - na.get("fatigue", 0) * 0.6
+	var _h2 = Time.get_ticks_usec()
 	var top = topThreat()
 	if top != null and top.id != nid and nationsAdjacent(nid, top.id): ws += 10
 	for o in G.nations:
 		if o.alive and o.id != nid and isTense(nid, o.id) and prepBy(nid, o.id) == o.id:
 			ws += 15
 			break
+	PROF["hoi:脅威・緊張"] = PROF.get("hoi:脅威・緊張", 0) + Time.get_ticks_usec() - _h2
+	var _h3 = Time.get_ticks_usec()
 	na.stab = clamp_f(na.stab + (clamp_f(st, 0, 100) - na.stab) * 0.12, 0, 100)
 	na.ws = clamp_f(na.ws + (clamp_f(ws, 0, 100) - na.ws) * 0.12, 0, 100)
 	# 政体の支持率：与党は安定度が高いほど伸び、隣国の政体にも引っ張られる
@@ -5384,19 +5413,26 @@ func hoiTurn(nid: int) -> void:
 			na.ipop[o.ideo] = na.ipop.get(o.ideo, 0.0) + 0.08
 	_normPop(na)
 	_ideoShift(na)
+	PROF["hoi:支持"] = PROF.get("hoi:支持", 0) + Time.get_ticks_usec() - _h3
+	var _h4 = Time.get_ticks_usec()
 	# 同じ政体どうしは近づき、違う政体とは少し離れる
 	for o in G.nations:
 		if not o.alive or o.id == nid or not o.has("ideo") or not natNear(nid, o.id): continue
 		if o.ideo == na.ideo:
 			if favorOf(nid, o.id) < 70: addFavor(nid, o.id, 0.4)
 		elif favorOf(nid, o.id) > 20: addFavor(nid, o.id, -0.15)
+	PROF["hoi:好感度"] = PROF.get("hoi:好感度", 0) + Time.get_ticks_usec() - _h4
+	var _h5 = Time.get_ticks_usec()
 	# 思想の合わない同盟は解ける
 	for o in G.nations:
 		if o.alive and o.id != nid and isAlly(nid, o.id) and not isVassal(o.id, nid) and not isVassal(nid, o.id) and not ideoCompat(nid, o.id) and randf() < 0.15:
 			breakAlly(nid, o.id)
 			chron("%s と %s の同盟が思想の違いで解消される" % [na.name, o.name], nid, "dip")
+	PROF["hoi:同盟"] = PROF.get("hoi:同盟", 0) + Time.get_ticks_usec() - _h5
+	var _h6 = Time.get_ticks_usec()
 	# 国家方針
 	_focusTurn(na)
+	PROF["hoi:方針"] = PROF.get("hoi:方針", 0) + Time.get_ticks_usec() - _h6
 ## 政変：ほかの思想の支持が過半を超え、安定度が低い（または圧倒的な支持）と政権が変わる
 func _ideoShift(na: Dictionary) -> void:
 	var best: String = na.ideo

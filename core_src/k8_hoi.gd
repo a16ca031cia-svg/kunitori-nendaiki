@@ -10,6 +10,7 @@ const FOCUS_UNIQUE_X := 13   # 固有の枝を置く列
 
 # ---------- 初期化 ----------
 func hoiInit(g: Dictionary) -> void:
+	PW_KEY = ""
 	var gen := []
 	for sp in GENERIC_SPIRITS: gen.append(sp)
 	gen.shuffle()
@@ -64,11 +65,13 @@ func hoiInit(g: Dictionary) -> void:
 	# 最初の工場：首都に軍需・民需を1つずつ（工業県はもっと）
 	var G0 = G
 	G = g
+	PW_KEY = ""
 	for na in g.nations:
 		var ind = START_IND.get(na.name, [1, 1])
 		_buildFactories(na.id, "mf", ind[0], true)
 		_buildFactories(na.id, "cf", ind[1], true)
 	G = G0
+	PW_KEY = ""
 func _normPop(na: Dictionary) -> void:
 	var s := 0.0
 	for k in IDEO_KEYS: s += max(0.0, na.ipop.get(k, 0.0))
@@ -101,8 +104,7 @@ func stabMul(na: Dictionary) -> float: return clamp_f(0.75 + na.get("stab", 50.0
 ## 建設費の倍率（民需工場が多いほど安い）
 func costMul(nid: int) -> float:
 	var cf := 0
-	for t in G.terrs:
-		if t.owner == nid: cf += bldCount(t, "cf")
+	for t in ownList(nid): cf += bldCount(t, "cf")
 	return clamp_f(1.0 + nmod(nid, "build") - cf * 0.02, 0.6, 1.3)
 
 # ---------- 工場 ----------
@@ -110,8 +112,7 @@ func _buildFactories(nid: int, kind: String, n: int, start := false) -> int:
 	var made := 0
 	for k in n:
 		var cand := []
-		for t in G.terrs:
-			if t.owner != nid: continue
+		for t in ownList(nid):
 			var used := 0
 			for b in t.bld:
 				if b: used += 1
@@ -141,8 +142,7 @@ func _buildFactories(nid: int, kind: String, n: int, start := false) -> int:
 func factoryCount(nid: int) -> Array:
 	var mf := 0
 	var cf := 0
-	for t in G.terrs:
-		if t.owner != nid: continue
+	for t in ownList(nid):
 		mf += bldCount(t, "mf")
 		cf += bldCount(t, "cf")
 	return [mf, cf]
@@ -152,19 +152,25 @@ func hoiTurn(nid: int) -> void:
 	var na := NAT(nid)
 	if not na.alive or not na.has("ideo"): return
 	var ideo: Dictionary = IDEO[na.ideo]
+	var _h0 := Time.get_ticks_usec()
 	var war := inWar(nid)
 	var dg := cpuDanger(nid)
+	var _h1 := Time.get_ticks_usec()
+	PROF["hoi:危険度"] = PROF.get("hoi:危険度", 0) + _h1 - _h0
 	# 政治力
 	na.pp = min(300.0, na.pp + ideo.pp + nmod(nid, "pp"))
 	# 安定度と戦争支持は目標へ少しずつ寄る
 	var st: float = 55.0 + ideo.stab + nmod(nid, "stab") - na.get("fatigue", 0) * 0.3 - (15 if na.food <= 0 else 0) - (5 if lordOf(nid) != null else 0)
 	var ws: float = 25.0 + ideo.ws + nmod(nid, "ws") + dg * 30.0 + (10 if war else 0) - na.get("fatigue", 0) * 0.6
+	var _h2 := Time.get_ticks_usec()
 	var top = topThreat()
 	if top != null and top.id != nid and nationsAdjacent(nid, top.id): ws += 10
 	for o in G.nations:
 		if o.alive and o.id != nid and isTense(nid, o.id) and prepBy(nid, o.id) == o.id:
 			ws += 15
 			break
+	PROF["hoi:脅威・緊張"] = PROF.get("hoi:脅威・緊張", 0) + Time.get_ticks_usec() - _h2
+	var _h3 := Time.get_ticks_usec()
 	na.stab = clamp_f(na.stab + (clamp_f(st, 0, 100) - na.stab) * 0.12, 0, 100)
 	na.ws = clamp_f(na.ws + (clamp_f(ws, 0, 100) - na.ws) * 0.12, 0, 100)
 	# 政体の支持率：与党は安定度が高いほど伸び、隣国の政体にも引っ張られる
@@ -174,19 +180,26 @@ func hoiTurn(nid: int) -> void:
 			na.ipop[o.ideo] = na.ipop.get(o.ideo, 0.0) + 0.08
 	_normPop(na)
 	_ideoShift(na)
+	PROF["hoi:支持"] = PROF.get("hoi:支持", 0) + Time.get_ticks_usec() - _h3
+	var _h4 := Time.get_ticks_usec()
 	# 同じ政体どうしは近づき、違う政体とは少し離れる
 	for o in G.nations:
 		if not o.alive or o.id == nid or not o.has("ideo") or not natNear(nid, o.id): continue
 		if o.ideo == na.ideo:
 			if favorOf(nid, o.id) < 70: addFavor(nid, o.id, 0.4)
 		elif favorOf(nid, o.id) > 20: addFavor(nid, o.id, -0.15)
+	PROF["hoi:好感度"] = PROF.get("hoi:好感度", 0) + Time.get_ticks_usec() - _h4
+	var _h5 := Time.get_ticks_usec()
 	# 思想の合わない同盟は解ける
 	for o in G.nations:
 		if o.alive and o.id != nid and isAlly(nid, o.id) and not isVassal(o.id, nid) and not isVassal(nid, o.id) and not ideoCompat(nid, o.id) and randf() < 0.15:
 			breakAlly(nid, o.id)
 			chron("%s と %s の同盟が思想の違いで解消される" % [na.name, o.name], nid, "dip")
+	PROF["hoi:同盟"] = PROF.get("hoi:同盟", 0) + Time.get_ticks_usec() - _h5
+	var _h6 := Time.get_ticks_usec()
 	# 国家方針
 	_focusTurn(na)
+	PROF["hoi:方針"] = PROF.get("hoi:方針", 0) + Time.get_ticks_usec() - _h6
 ## 政変：ほかの思想の支持が過半を超え、安定度が低い（または圧倒的な支持）と政権が変わる
 func _ideoShift(na: Dictionary) -> void:
 	var best: String = na.ideo

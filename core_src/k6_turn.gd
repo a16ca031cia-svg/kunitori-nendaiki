@@ -239,8 +239,7 @@ func _evOk(na: Dictionary, ev: Dictionary, i: int) -> bool:
 	return na.gold >= o.get("need", 0)
 func _ownOf(nid: int) -> Array:
 	var r := []
-	for t in G.terrs:
-		if t.owner == nid: r.append(t)
+	for t in ownList(nid): r.append(t)
 	return r
 func _evRun(na: Dictionary, ev: Dictionary, i: int) -> String:
 	var own := _ownOf(na.id)
@@ -379,8 +378,7 @@ func recordHistory() -> void:
 # ---------- CPU ----------
 func prodPerTurn(nid: int) -> int:
 	var n := 0
-	for t in G.terrs:
-		if t.owner != nid: continue
+	for t in ownList(nid):
 		for b in t.bld:
 			var o = BLD_OUT.get(b) if b else null
 			if o == null: continue
@@ -462,8 +460,7 @@ func cpuObjective(nid: int, list: Array, bfsOf: Dictionary):
 func nearestOwnCity(_a, bs: Dictionary, nid: int):
 	var best = null
 	var bd := INF
-	for t in G.terrs:
-		if t.owner != nid: continue
+	for t in ownList(nid):
 		var d = bget(bs, t.id)
 		if d == null: continue
 		var w: float = d - (1 if t.type == "city" else 0) - (1 if t.cap else 0)
@@ -538,6 +535,7 @@ func cpuTurn(nid: int) -> void:
 		var shown = msg.get_slice(":", 0)
 		setPhase(nid, P.n + ((" ／ " + shown) if shown != "" else ""))
 	hoiTurn(nid)
+	phase.call("政策")
 	cpuPolicy(nid, P)
 	phase.call("外交")
 	await yieldMaybe()

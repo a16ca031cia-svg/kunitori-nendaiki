@@ -216,18 +216,50 @@ func refreshSupply(force := false) -> void:
 var PW_CACHE := {}
 var PW_KEY := ""
 func powKey() -> String: return str(G.turn) + "_" + str(G.get("ownRev", 0))
+## 国力：鍵（ターン・持ち主の変化）が変わったら、全領地を1回だけなめて全部の国をまとめて計算する
+var OWN_N := {}
+var OWN_L := {}
+var NO_OWNL: bool = OS.get_environment("KN_NOOWNL") != ""
+func _powAll() -> void:
+	OWN_L = {}
+	PW_CACHE = {}
+	OWN_N = {}
+	PW_KEY = powKey()
+	var acc := {}
+	for t in G.terrs:
+		var o: int = t.owner
+		if o < 0: continue
+		if not OWN_L.has(o): OWN_L[o] = []
+		OWN_L[o].append(t)
+		var nb := 0
+		for b in t.bld:
+			if b: nb += 1
+		acc[o] = acc.get(o, 0.0) + t.dev * (120 if t.type == "city" else 80) + nb * 60 + t.pop * 0.006
+		OWN_N[o] = OWN_N.get(o, 0) + 1
+	for na in G.nations:
+		PW_CACHE[na.id] = round(acc.get(na.id, 0.0) + nationTroops(na.id) * 0.6 + na.gold * 0.05)
 func nationPower(nid: int) -> float:
-	if PW_KEY != powKey():
-		PW_CACHE = {}
-		PW_KEY = powKey()
+	if PW_KEY != powKey(): _powAll()
 	if PW_CACHE.has(nid): return PW_CACHE[nid]
 	var v := nationPowerCalc(nid)
 	PW_CACHE[nid] = v
 	return v
+## 自国の領地の一覧（全領地の並び順のまま。持ち主が変わると作り直す）
+func ownList(nid: int) -> Array:
+	if NO_OWNL:
+		var r := []
+		for t in G.terrs:
+			if t.owner == nid: r.append(t)
+		return r
+	if PW_KEY != powKey(): _powAll()
+	return OWN_L.get(nid, [])
+## 領地の数（国力と同じ鍵で覚えておく）
+func ownCount(nid: int) -> int:
+	if PW_KEY != powKey(): _powAll()
+	return OWN_N.get(nid, 0)
 func nationPowerCalc(nid: int) -> float:
 	var p := 0.0
-	for t in G.terrs:
-		if t.owner != nid: continue
+	for t in ownList(nid):
 		var nb := 0
 		for b in t.bld:
 			if b: nb += 1
