@@ -413,7 +413,11 @@ func _showTitle() -> void:
 		bNew.disabled = true
 		await get_tree().process_frame
 		await get_tree().process_frame
-		_newGame(_sizeSel))
+		var ok = await _newGame(_sizeSel)
+		# 始められなかった時はボタンを戻して、もう一度押せるようにする
+		if not ok and is_instance_valid(bNew):
+			bNew.text = "開始（全勢力CPU）"
+			bNew.disabled = false)
 	box.add_child(bNew)
 	var last: int = S.latestSlot()
 	if last:
@@ -430,16 +434,17 @@ func _hideTitle() -> void:
 	if titleScr != null:
 		titleScr.queue_free()
 		titleScr = null
-func _newGame(size_: String) -> void:
+func _newGame(size_: String) -> bool:
 	var _ng0 = Time.get_ticks_msec()
 	if OS.get_environment("KN_STARTUP") != "": S.game_started.connect(func(): print("STARTUP 新しいゲーム（ゲームの計算）", Time.get_ticks_msec() - _ng0, "ms"), CONNECT_ONE_SHOT)
 	if size_ == "japan":
 		var w = randi() % 4
 		S.bootMark("新しいゲーム：地図%d を確かめる" % w)
-		if not await _ensureJpMap(w): return
+		if not await _ensureJpMap(w): return false
 		S.NEXT_JP_MAP = w
 	S.bootMark("新しいゲームを始める")
 	S.newGame(size_)
+	return true
 func _loadSlot(i: int) -> void:
 	closeModal()
 	var w = S.slotJpMap(i)
@@ -461,6 +466,8 @@ func _fetchJpMap(i: int) -> bool:
 	var href = str(JavaScriptBridge.eval("location.href.split('#')[0].split('?')[0]", true)) if OS.has_feature("web") else OS.get_environment("KN_FAKEWEB")
 	var req = HTTPRequest.new()
 	add_child(req)
+	# 公開先は圧縮して送ってくるが、ブラウザが解凍済みの中身を渡すので、Godot では解凍しない
+	req.accept_gzip = false
 	req.request(href.substr(0, href.rfind("/") + 1) + "jpmap%d.bin" % i)
 	var res = await req.request_completed
 	req.queue_free()
@@ -1643,6 +1650,7 @@ func _fetchBgm(k: String) -> void:
 	var base = href.substr(0, href.rfind("/") + 1)
 	var req = HTTPRequest.new()
 	add_child(req)
+	req.accept_gzip = false
 	req.request_completed.connect(func(result, code, _h, body):
 		req.queue_free()
 		if result != HTTPRequest.RESULT_SUCCESS or code != 200: return

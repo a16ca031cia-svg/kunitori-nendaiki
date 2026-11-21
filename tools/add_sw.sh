@@ -17,6 +17,12 @@ MAN="{${MAN%,}}"
 cat > sw.js <<'EOF'
 // 自動生成（tools/add_sw.sh）：大きなファイルを中身の指紋つきでブラウザに保存して使い回す
 const STORE = "kunitori-files";
+function plain(r) {
+	const h = new Headers(r.headers);
+	h.delete("content-encoding");
+	h.delete("content-length");
+	return new Response(r.body, { status: r.status, statusText: r.statusText, headers: h });
+}
 self.addEventListener("install", (e) => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
 self.addEventListener("fetch", (e) => {
@@ -33,16 +39,19 @@ self.addEventListener("fetch", (e) => {
 		if (!h) return fetch(e.request);
 		const key = new URL(name + "?h=" + h, self.registration.scope).href;
 		const hit = await c.match(key);
-		if (hit) return hit;
+		if (hit) return plain(hit);
 		const r = await fetch(key, { cache: "no-store" });
-		if (r.ok) c.put(key, r.clone()).catch(() => {});
-		return r;
+		if (!r.ok) return r;
+		// 中身はブラウザが解凍済みなので、「圧縮してある」印と長さを外して渡す・保存する（付いたままだと取得側がもう一度解凍しようとして失敗する）
+		const clean = plain(r);
+		c.put(key, clean.clone()).catch(() => {});
+		return clean;
 	})());
 });
 EOF
 # index.html：一覧を書き、必要なら初回だけサービスワーカーを待ってから起動する（まだ足していなければ足す）
 if ! grep -q "kunitoriPrep" index.html; then
-	perl -0pi -e 's/(const engine = new Engine\(GODOT_CONFIG\);\n)/$1\n\/\/ 大きなファイルをブラウザに保存して使い回す（tools\/add_sw.sh）\nconst KUNITORI_FILES = __KMAN__;\nasync function kunitoriPrep() {\n\ttry {\n\t\tif (!("caches" in window) || !("serviceWorker" in navigator) || location.protocol === "file:") return;\n\t\tconst c = await caches.open("kunitori-files");\n\t\tawait c.put("kunitori-manifest", new Response(JSON.stringify(KUNITORI_FILES)));\n\t\tlet first = !navigator.serviceWorker.controller;\n\t\tfor (const r of await navigator.serviceWorker.getRegistrations()) { const w = r.active || r.waiting || r.installing; if (w && w.scriptURL.indexOf("sw.js?v=") >= 0) { await r.unregister(); first = true; } }\n\t\tconst reg = navigator.serviceWorker.register("sw.js").catch(() => null);\n\t\tif (first) await Promise.race([new Promise((r) => navigator.serviceWorker.addEventListener("controllerchange", r, { once: true })), new Promise((r) => setTimeout(r, 3000))]);\n\t} catch (e) {}\n}\n\/\/ 起動の後：まだ保存していないファイルを裏で保存し、古い版の保存を消す\nasync function kunitoriFill() {\n\ttry {\n\t\tif (!("caches" in window)) return;\n\t\tawait new Promise((r) => setTimeout(r, 15000));\n\t\tconst c = await caches.open("kunitori-files");\n\t\tconst want = {};\n\t\tfor (const [n, h] of Object.entries(KUNITORI_FILES)) want[new URL(n + "?h=" + h, location.href).href] = true;\n\t\tfor (const req of await c.keys()) if (!want[req.url] && !req.url.endsWith("kunitori-manifest")) await c.delete(req);\n\t\tfor (const k of Object.keys(want)) {\n\t\t\tif (await c.match(k)) continue;\n\t\t\tconst r = await fetch(k, { cache: "no-store" });\n\t\t\tif (r.ok) await c.put(k, r);\n\t\t}\n\t} catch (e) {}\n}\n/' index.html
+	perl -0pi -e 's/(const engine = new Engine\(GODOT_CONFIG\);\n)/$1\n\/\/ 大きなファイルをブラウザに保存して使い回す（tools\/add_sw.sh）\nconst KUNITORI_FILES = __KMAN__;\nasync function kunitoriPrep() {\n\ttry {\n\t\tif (!("caches" in window) || !("serviceWorker" in navigator) || location.protocol === "file:") return;\n\t\tconst c = await caches.open("kunitori-files");\n\t\tawait c.put("kunitori-manifest", new Response(JSON.stringify(KUNITORI_FILES)));\n\t\tlet first = !navigator.serviceWorker.controller;\n\t\tfor (const r of await navigator.serviceWorker.getRegistrations()) { const w = r.active || r.waiting || r.installing; if (w && w.scriptURL.indexOf("sw.js?v=") >= 0) { await r.unregister(); first = true; } }\n\t\tconst reg = navigator.serviceWorker.register("sw.js").catch(() => null);\n\t\tif (first) await Promise.race([new Promise((r) => navigator.serviceWorker.addEventListener("controllerchange", r, { once: true })), new Promise((r) => setTimeout(r, 3000))]);\n\t} catch (e) {}\n}\n\/\/ 起動の後：まだ保存していないファイルを裏で保存し、古い版の保存を消す\nasync function kunitoriFill() {\n\ttry {\n\t\tif (!("caches" in window)) return;\n\t\tawait new Promise((r) => setTimeout(r, 15000));\n\t\tconst c = await caches.open("kunitori-files");\n\t\tconst want = {};\n\t\tfor (const [n, h] of Object.entries(KUNITORI_FILES)) want[new URL(n + "?h=" + h, location.href).href] = true;\n\t\tfor (const req of await c.keys()) if (!want[req.url] && !req.url.endsWith("kunitori-manifest")) await c.delete(req);\n\t\tfor (const k of Object.keys(want)) {\n\t\t\tif (await c.match(k)) continue;\n\t\t\tconst r = await fetch(k, { cache: "no-store" });\n\t\t\tif (r.ok) await c.put(k, new Response(await r.blob(), { headers: { "content-type": r.headers.get("content-type") || "application\/octet-stream" } }));\n\t\t}\n\t} catch (e) {}\n}\n/' index.html
 	perl -0pi -e 's/\t\tsetStatusMode\(\x27progress\x27\);\n\t\tengine\.startGame\(\{/\t\tsetStatusMode(\x27progress\x27);\n\t\tkunitoriPrep().then(() => engine.startGame({/; s/(\t\t\tsetStatusMode\(\x27hidden\x27\);\n)(\t\t\}, displayFailureNotice)\);/$1\t\t\tkunitoriFill();\n$2));/' index.html
 fi
 perl -0pi -e 's/const KUNITORI_FILES = [^;]*;/const KUNITORI_FILES = '"$MAN"';/' index.html
