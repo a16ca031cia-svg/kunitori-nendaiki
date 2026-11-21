@@ -1341,6 +1341,8 @@ func _bar(col: String, n: int) -> String:
 func _debugHash() -> void:
 	var h = str(JavaScriptBridge.eval("location.hash", true))
 	if not h.begins_with("#") or not h.contains("ff="): return
+	# 確認用のURLでは音を出さない（保存した好みは変えない）
+	AudioServer.set_bus_mute(0, true)
 	var q = {}
 	for kv in h.substr(1).split("&"):
 		var p = kv.split("=")

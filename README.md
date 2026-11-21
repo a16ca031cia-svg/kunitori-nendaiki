@@ -28,7 +28,7 @@ sh tools/export_web.sh
 powershell -ExecutionPolicy Bypass -File tools\serve.ps1
 ```
 
-http://localhost:8771/ を開く。`#size=japan&ff=40&sel=war` を付けると、40ターン早送りして戦争中の国を選んだ状態から始まる（確認用）。
+http://localhost:8771/ を開く。`#size=japan&ff=40&sel=war` を付けると、40ターン早送りして戦争中の国を選んだ状態から始まる（確認用）。このURLでは音は鳴らない。
 
 画面なしでターンを回す：
 
