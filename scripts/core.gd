@@ -4781,7 +4781,7 @@ func cpuTurn(nid: int) -> void:
 					if x.owner == nid and total(x.t) > 0: here.append(x)
 				var thr = powerOf(foeA, T(a.at), false)
 				var dfp = powerOf(here, T(a.at), true)
-				if thr > dfp * 1.7:
+				if thr > dfp * 2.2:
 					var bt = null
 					var bsc = -INF
 					for nb in roadNbrs(a.at):
