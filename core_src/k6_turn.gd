@@ -814,6 +814,82 @@ func cpuTurn(nid: int) -> void:
 			bestA.post = t.id
 			postTaken[t.id] = true
 			freeA.erase(bestA)
+	# ===== 前線：戦争中は、敵軍の脅威に応じて前線へ軍を回す（1か所に何軍でも）。攻勢の分は残す =====
+	var frontSet := {}
+	if foes.size() and smartAI(nid):
+		var offKeep: int = int(ceil(list.size() * 0.45)) if obj != null else 0
+		var fr := []
+		for t in frontier:
+			var foeA := []
+			var warNb := false
+			for nb in roadNbrs(t.id):
+				var o: int = T(nb.to).owner
+				if o >= 0 and o != nid and atWar(nid, o): warNb = true
+				for x in armiesAt(nb.to):
+					if x.owner != nid and atWar(nid, x.owner) and total(x.t) > 0: foeA.append(x)
+			if not warNb and foeA.is_empty(): continue
+			fr.append([t, powerOf(foeA, t, false) if foeA.size() else 0.0])
+		fr.sort_custom(func(x, y): return x[1] > y[1])
+		# 脅威のない持ち場（首都を除く）の守備軍も、前線へ回せるようにする
+		var thrSet := {}
+		for e in fr:
+			if e[1] > 0: thrSet[e[0].id] = true
+		var spare := []
+		for aid in guard.keys():
+			var gt: int = guard[aid]
+			if thrSet.has(gt) or T(gt).cap: continue
+			var ga = na.armies[aid]
+			if ga != null and not freeA.has(ga): spare.append(ga)
+		for e in fr:
+			if e[1] <= 0: break
+			var t = e[0]
+			var mine := []
+			for x in armiesAt(t.id):
+				if x.owner == nid and total(x.t) > 0: mine.append(x)
+			for aid in guard:
+				if guard[aid] == t.id and na.armies[aid] != null and not mine.has(na.armies[aid]): mine.append(na.armies[aid])
+			var have: float = powerOf(mine, t, true) if mine.size() else 0.0
+			while have < e[1] * 0.7 and (freeA.size() > offKeep or spare.size()):
+				var bestA = null
+				var bd := INF
+				for a in (freeA if freeA.size() > offKeep else []) + spare:
+					var d = bget(getB.call(a), t.id)
+					if d == null or d > 6: continue
+					var dd: float = d + (2.0 if spare.has(a) else 0.0)
+					if dd < bd:
+						bd = dd
+						bestA = a
+				if bestA == null: break
+				guard[bestA.idx] = t.id
+				bestA.post = t.id
+				frontSet[bestA.idx] = true
+				freeA.erase(bestA)
+				spare.erase(bestA)
+				mine.append(bestA)
+				have = powerOf(mine, t, true)
+		# 見張り：敵軍のいない前線にも、余裕があれば1軍
+		for e in fr:
+			if e[1] > 0: continue
+			if freeA.size() <= offKeep: break
+			var t = e[0]
+			var covered := false
+			for x in armiesAt(t.id):
+				if x.owner == nid: covered = true
+			for aid in guard:
+				if guard[aid] == t.id: covered = true
+			if covered: continue
+			var bestA = null
+			var bd := INF
+			for a in freeA:
+				var d = bget(getB.call(a), t.id)
+				if d == null or d > 3: continue
+				if d < bd:
+					bd = d
+					bestA = a
+			if bestA != null:
+				guard[bestA.idx] = t.id
+				bestA.post = t.id
+				freeA.erase(bestA)
 	var order := list.duplicate()
 	order.sort_custom(func(x, y):
 		var sx := 0 if obj != null and x.at == obj.stage else 1
@@ -941,7 +1017,7 @@ func cpuTurn(nid: int) -> void:
 				a.wait = 0
 				a.stay = "守備"
 				continue
-			if smartAI(nid) and _overwhelmed(dst, nid, a):
+			if smartAI(nid) and not frontSet.has(a.idx) and _overwhelmed(dst, nid, a):
 				a.path = []
 				a.stay = "様子見"
 				continue

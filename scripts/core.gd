@@ -1,4 +1,4 @@
-# 自動生成：core_src/*.gd をまとめたもの（直接編集しない。tools/build_core.sh で作り直す）
+# 自動生成：core_src/*.gd をまとめたもの（直接編集しない。tools/build_core.sh か publish.ps1 で作り直す）
 extends Node
 
 # ==================== k0_base.gd ====================
@@ -3398,7 +3398,7 @@ func cpuDiplomacy(nid: int) -> void:
 		var sm2 = smartAI(nid)
 		var mine2: float = atkCoalition(nid, o.id) if sm2 else nationPower(nid)
 		var th2: float = defCoalition(nid, o.id) if sm2 else max(1.0, nationPower(o.id))
-		var forced: bool = na.get("forceWar", -1) == o.id and mine2 >= th2 * 0.45
+		var forced: bool = na.get("forceWar", -1) == o.id and mine2 >= th2 * 0.8
 		if (not forced and mine2 < th2 * ((0.6 if na.persona == "fascism" else 0.85) if sm2 else 0.7)) or na.get("fatigue", 0) >= DIP.fatiguePeace:
 			cancelWarPrep(nid, o.id)
 			G.dip.cool[nid][o.id] = G.turn + 5; G.dip.cool[o.id][nid] = G.turn + 5
@@ -4809,6 +4809,82 @@ func cpuTurn(nid: int) -> void:
 			bestA.post = t.id
 			postTaken[t.id] = true
 			freeA.erase(bestA)
+	# ===== 前線：戦争中は、敵軍の脅威に応じて前線へ軍を回す（1か所に何軍でも）。攻勢の分は残す =====
+	var frontSet = {}
+	if foes.size() and smartAI(nid):
+		var offKeep: int = int(ceil(list.size() * 0.45)) if obj != null else 0
+		var fr = []
+		for t in frontier:
+			var foeA = []
+			var warNb = false
+			for nb in roadNbrs(t.id):
+				var o: int = T(nb.to).owner
+				if o >= 0 and o != nid and atWar(nid, o): warNb = true
+				for x in armiesAt(nb.to):
+					if x.owner != nid and atWar(nid, x.owner) and total(x.t) > 0: foeA.append(x)
+			if not warNb and foeA.is_empty(): continue
+			fr.append([t, powerOf(foeA, t, false) if foeA.size() else 0.0])
+		fr.sort_custom(func(x, y): return x[1] > y[1])
+		# 脅威のない持ち場（首都を除く）の守備軍も、前線へ回せるようにする
+		var thrSet = {}
+		for e in fr:
+			if e[1] > 0: thrSet[e[0].id] = true
+		var spare = []
+		for aid in guard.keys():
+			var gt: int = guard[aid]
+			if thrSet.has(gt) or T(gt).cap: continue
+			var ga = na.armies[aid]
+			if ga != null and not freeA.has(ga): spare.append(ga)
+		for e in fr:
+			if e[1] <= 0: break
+			var t = e[0]
+			var mine = []
+			for x in armiesAt(t.id):
+				if x.owner == nid and total(x.t) > 0: mine.append(x)
+			for aid in guard:
+				if guard[aid] == t.id and na.armies[aid] != null and not mine.has(na.armies[aid]): mine.append(na.armies[aid])
+			var have: float = powerOf(mine, t, true) if mine.size() else 0.0
+			while have < e[1] * 0.7 and (freeA.size() > offKeep or spare.size()):
+				var bestA = null
+				var bd = INF
+				for a in (freeA if freeA.size() > offKeep else []) + spare:
+					var d = bget(getB.call(a), t.id)
+					if d == null or d > 6: continue
+					var dd: float = d + (2.0 if spare.has(a) else 0.0)
+					if dd < bd:
+						bd = dd
+						bestA = a
+				if bestA == null: break
+				guard[bestA.idx] = t.id
+				bestA.post = t.id
+				frontSet[bestA.idx] = true
+				freeA.erase(bestA)
+				spare.erase(bestA)
+				mine.append(bestA)
+				have = powerOf(mine, t, true)
+		# 見張り：敵軍のいない前線にも、余裕があれば1軍
+		for e in fr:
+			if e[1] > 0: continue
+			if freeA.size() <= offKeep: break
+			var t = e[0]
+			var covered = false
+			for x in armiesAt(t.id):
+				if x.owner == nid: covered = true
+			for aid in guard:
+				if guard[aid] == t.id: covered = true
+			if covered: continue
+			var bestA = null
+			var bd = INF
+			for a in freeA:
+				var d = bget(getB.call(a), t.id)
+				if d == null or d > 3: continue
+				if d < bd:
+					bd = d
+					bestA = a
+			if bestA != null:
+				guard[bestA.idx] = t.id
+				bestA.post = t.id
+				freeA.erase(bestA)
 	var order = list.duplicate()
 	order.sort_custom(func(x, y):
 		var sx = 0 if obj != null and x.at == obj.stage else 1
@@ -4936,7 +5012,7 @@ func cpuTurn(nid: int) -> void:
 				a.wait = 0
 				a.stay = "守備"
 				continue
-			if smartAI(nid) and _overwhelmed(dst, nid, a):
+			if smartAI(nid) and not frontSet.has(a.idx) and _overwhelmed(dst, nid, a):
 				a.path = []
 				a.stay = "様子見"
 				continue
@@ -5730,7 +5806,13 @@ func _demand(na: Dictionary, o: int, why: String) -> void:
 	var ratio = nationPower(nid) / max(1.0, theirs)
 	var same: bool = B.get("ideo") == na.ideo
 	var sympathy: float = B.get("ipop", {}).get(na.ideo, 0.0)
-	var annexOK: bool = not inWar(o) and (ratio >= 2.2 or (same and ratio >= 1.2) or (sympathy >= 40 and ratio >= 1.0))
+	# 宥和（HOI4 のミュンヘン会談のように）：要求された国は自国だけの国力で比べる。陣営に入っておらず、要求した国より強い保証国もいなければ受け入れやすい
+	var alone = nationPower(nid) / max(1.0, nationPower(o))
+	var strongGuard = false
+	for g in G.nations:
+		if g.alive and g.id != nid and g.get("guar", []).has(o) and nationPower(g.id) > nationPower(nid): strongGuard = true
+	var appease: bool = F == null and not strongGuard
+	var annexOK: bool = not inWar(o) and (ratio >= 2.2 or (appease and alone >= 1.4) or (same and alone >= 1.1) or (sympathy >= 35 and alone >= 1.0))
 	var msg = ""
 	if annexOK and nationsAdjacent(nid, o):
 		msg = "%s が %s の要求を受け入れ、併合される（%s）" % [B.name, na.name, why]
@@ -5869,7 +5951,7 @@ func _turnOn(nid: int, o: int) -> void:
 #   demand=[県]（併合・従属の要求。断られたら大義） guar=[県]（独立の保証：攻められたら参戦） pact="県"（不可侵条約）
 #   fac="陣営名"（陣営を作る） joinFac="陣営名"（その陣営に入る。なければ作る） invite=[県]（自分の陣営に招く）
 # 修正（国民精神）のキー：gold/food/troop（兵の生産）/atk/def/pop（人口上限）/grow（人口の伸び）/sec（毎ターンの治安）
-#   stab/ws（安定度・戦争支持の目標）/mf/cf（工場の出力）/build（建設費、負で安く）/fort（砦の防御）/pp（政治力）
+#   stab/ws（安定度・戦争支持の目標）/mf/cf（工場の出力）/build（建設費、負で安く）/fort（砦の防御）/pp（政治力）/cap（兵の上限）
 
 ## 思想（与党）。政権を握る思想で国のふるまい（IDEO_PERSONA）が決まる
 const IDEO := {

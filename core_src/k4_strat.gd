@@ -300,7 +300,7 @@ func cpuDiplomacy(nid: int) -> void:
 		var sm2 := smartAI(nid)
 		var mine2: float = atkCoalition(nid, o.id) if sm2 else nationPower(nid)
 		var th2: float = defCoalition(nid, o.id) if sm2 else max(1.0, nationPower(o.id))
-		var forced: bool = na.get("forceWar", -1) == o.id and mine2 >= th2 * 0.45
+		var forced: bool = na.get("forceWar", -1) == o.id and mine2 >= th2 * 0.8
 		if (not forced and mine2 < th2 * ((0.6 if na.persona == "fascism" else 0.85) if sm2 else 0.7)) or na.get("fatigue", 0) >= DIP.fatiguePeace:
 			cancelWarPrep(nid, o.id)
 			G.dip.cool[nid][o.id] = G.turn + 5; G.dip.cool[o.id][nid] = G.turn + 5

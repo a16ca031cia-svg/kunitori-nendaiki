@@ -453,7 +453,13 @@ func _demand(na: Dictionary, o: int, why: String) -> void:
 	var ratio := nationPower(nid) / max(1.0, theirs)
 	var same: bool = B.get("ideo") == na.ideo
 	var sympathy: float = B.get("ipop", {}).get(na.ideo, 0.0)
-	var annexOK: bool = not inWar(o) and (ratio >= 2.2 or (same and ratio >= 1.2) or (sympathy >= 40 and ratio >= 1.0))
+	# 宥和（HOI4 のミュンヘン会談のように）：要求された国は自国だけの国力で比べる。陣営に入っておらず、要求した国より強い保証国もいなければ受け入れやすい
+	var alone := nationPower(nid) / max(1.0, nationPower(o))
+	var strongGuard := false
+	for g in G.nations:
+		if g.alive and g.id != nid and g.get("guar", []).has(o) and nationPower(g.id) > nationPower(nid): strongGuard = true
+	var appease: bool = F == null and not strongGuard
+	var annexOK: bool = not inWar(o) and (ratio >= 2.2 or (appease and alone >= 1.4) or (same and alone >= 1.1) or (sympathy >= 35 and alone >= 1.0))
 	var msg := ""
 	if annexOK and nationsAdjacent(nid, o):
 		msg = "%s が %s の要求を受け入れ、併合される（%s）" % [B.name, na.name, why]
