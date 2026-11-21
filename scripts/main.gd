@@ -1143,7 +1143,7 @@ func _showBattle(A: Array, D: Array, t: Dictionary) -> void:
 			return r
 		var ra: float = sa.tot / max(1.0, sa.tot + sd.tot)
 		var na = int(round(ra * 30))
-		body.text = "[table=2][cell]%s　　[/cell][cell]%s[/cell][/table]\n[center][color=%s]%s[/color][color=%s]%s[/color]\n戦力比 %d : %d[/center]\n[font_size=12]%s[/font_size]" % [
+		body.text = "[table=2][cell]%s　　[/cell][cell]%s[/cell][/table]\n[center]%s%s\n戦力比 %d : %d[/center]\n[font_size=12]%s[/font_size]" % [
 			side_.call(A, sa, 0), side_.call(D, sd, 1), _bar(S.NAT(A[0].owner).color, na * 2), _bar(S.NAT(D[0].owner).color, (30 - na) * 2),
 			int(round(ra * 100)), 100 - int(round(ra * 100)), "\n".join(logs.slice(-6))]
 	var finish = func(kind: String):
@@ -1269,6 +1269,23 @@ func _sim(size_: String, turns: int) -> void:
 		if S.G.over != null:
 			print("over winner=", S.G.winner)
 			break
+	var pol = {}
+	var troops = 0
+	var food = 0
+	var gold = 0
+	var pop = 0
+	var alive2 = 0
+	var vass = 0
+	for n in S.G.nations:
+		if not n.alive: continue
+		alive2 += 1
+		pol[n.policy] = pol.get(n.policy, 0) + 1
+		troops += S.nationTroops(n.id)
+		food += n.food
+		gold += n.gold
+		if S.lordOf(n.id) != null: vass += 1
+	for t in S.G.terrs: pop += t.pop
+	print("STATS alive=", alive2, " wars=", S.G.wars.size(), " vass=", vass, " pol=", pol, " troopsAvg=", troops / alive2, " foodAvg=", food / alive2, " goldAvg=", gold / alive2, " pop=", pop)
 	for c in S.G.chron.slice(-15): print("  ", c.t, " ", c.s)
 	var ks = S.PROF.keys()
 	ks.sort_custom(func(a, b): return S.PROF[a] > S.PROF[b])
