@@ -108,6 +108,8 @@ func _buildTheme() -> void:
 	fontR = load("res://fonts/ZenKakuGothicNew-Regular.ttf")
 	fontB = load("res://fonts/ZenKakuGothicNew-Bold.ttf")
 	fontD = load("res://fonts/ShipporiMinchoB1-SemiBold.ttf")
+	# 明朝体は使う文字だけに絞ってある（tools/subset_font.pl）。無い文字はゴシック体で出す
+	fontD.fallbacks = [fontB]
 	var th = Theme.new()
 	th.default_font = fontR
 	th.default_font_size = 14
@@ -421,11 +423,14 @@ func _hideTitle() -> void:
 		titleScr.queue_free()
 		titleScr = null
 func _newGame(size_: String) -> void:
+	var _ng0 = Time.get_ticks_msec()
+	if OS.get_environment("KN_STARTUP") != "": S.game_started.connect(func(): print("STARTUP 新しいゲーム（ゲームの計算）", Time.get_ticks_msec() - _ng0, "ms"), CONNECT_ONE_SHOT)
 	S.newGame(size_)
 func _loadSlot(i: int) -> void:
 	closeModal()
 	if not S.loadSlot(i): _toast("読み込めませんでした", "err")
 func _onStarted() -> void:
+	var _st0 = Time.get_ticks_msec()
 	_updateBgm(true)
 	_hideTitle()
 	closeModal()
@@ -434,6 +439,7 @@ func _onStarted() -> void:
 	_sideLast = ""
 	map.setup()
 	map.fitView()
+	if OS.get_environment("KN_STARTUP") != "": print("STARTUP 地図の下ごしらえ ", Time.get_ticks_msec() - _st0, "ms")
 	refresh()
 
 # ============================================================
@@ -1514,10 +1520,13 @@ func _setupAudio() -> void:
 			AudioServer.set_bus_name(AudioServer.bus_count - 1, bn)
 			AudioServer.set_bus_send(AudioServer.bus_count - 1, "Master")
 	_applyVolume()
+	# 曲（平時 1.9MB・戦時 10MB）は起動を軽くするため、ブラウザ版では書き出しに含めず、起動後に裏で読み込む
 	for k in ["peace", "war"]:
-		var st: AudioStreamOggVorbis = load("res://audio/bgm_%s.ogg" % k)
-		st.loop = true
-		_bgm[k] = st
+		if OS.has_feature("web"): _fetchBgm(k)
+		else:
+			var st: AudioStreamOggVorbis = load("res://audio/bgm_%s.ogg" % k)
+			st.loop = true
+			_bgm[k] = st
 	for i in 2:
 		var p = AudioStreamPlayer.new()
 		p.volume_db = -80.0
@@ -1579,6 +1588,20 @@ func openVolume() -> void:
 	note.text = "[font_size=12][color=#9b9484]つまみを左の端まで下げると、その音は鳴りません。メニューの「音楽」「効果音」でも入り切りできます。[/color][/font_size]"
 	vb.add_child(note)
 	modal("音量", vb, [_btn("閉じる", closeModal, true)], 420)
+func _fetchBgm(k: String) -> void:
+	var href = str(JavaScriptBridge.eval("location.href.split('#')[0].split('?')[0]", true))
+	var base = href.substr(0, href.rfind("/") + 1)
+	var req = HTTPRequest.new()
+	add_child(req)
+	req.request_completed.connect(func(result, code, _h, body):
+		req.queue_free()
+		if result != HTTPRequest.RESULT_SUCCESS or code != 200: return
+		var st = AudioStreamOggVorbis.load_from_buffer(body)
+		if st == null: return
+		st.loop = true
+		_bgm[k] = st
+		_updateBgm(true))
+	req.request(base + "bgm_%s.ogg" % k)
 ## 効果音（同じ音は短い間に重ねて鳴らさない）
 func _sfx(name: String, db := 0.0) -> void:
 	if not S.UI.get("sfx", true) or not _sfxStreams.has(name): return
@@ -1598,6 +1621,8 @@ func _updateBgm(force := false) -> void:
 		var sel = S.UI.selNat
 		var war: bool = S.inWar(sel) if sel != null and sel >= 0 else S.G.wars.size() >= max(3, S.G.nations.size() / 8)
 		want = "war" if war else "peace"
+		if want == "war" and not _bgm.has("war"): want = "peace"
+		if not _bgm.has(want): want = ""
 	if want == _bgmCur and not force: return
 	if want == _bgmCur and force and want != "": return
 	_bgmCur = want

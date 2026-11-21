@@ -17,7 +17,7 @@
 | `scripts/main.gd` | 画面（上の帯・右の欄・窓・キー操作） |
 | `scripts/ui/map_view.gd` | 地図の描画と操作 |
 | `scripts/jp_data.gd`・`data/` | 日本地図のデータ（地点・街道・川、県の形、初期状態4種類） |
-| `fonts/` | Zen Kaku Gothic New・Shippori Mincho B1（SIL Open Font License） |
+| `fonts/` | Zen Kaku Gothic New・Shippori Mincho B1（SIL Open Font License）。起動を軽くするため使う文字だけに絞ってある（元は `fonts_src/`、作り直しは `tools/subset_font.pl`） |
 | `audio/` | BGM（平時・戦時）と効果音。フリー素材（出典は `audio/CREDITS.md`） |
 | `tools/` | まとめ・書き出し・公開・確認用のスクリプト |
 

@@ -153,12 +153,20 @@ func _layer(parent: Node, fn: Callable) -> Node2D:
 #   下ごしらえ
 # ============================================================
 func setup() -> void:
+	var _q = [Time.get_ticks_usec()]
+	var mark = func(lbl):
+		var now = Time.get_ticks_usec()
+		if OS.get_environment("KN_STARTUP") != "": print("STARTUP   ", lbl, " ", (now - _q[0]) / 1000, "ms")
+		_q[0] = now
 	G_ = S.G
 	isJapan = S.G.has("geo")
 	S.segNbrs()
+	mark.call("segNbrs")
 	rings = []
 	for t in S.G.terrs: rings.append(_ringsOf(t))
+	mark.call("領地の輪郭")
 	_buildTris()
+	mark.call("領地の三角形")
 	landRings = []
 	lakeRings = []
 	coastLines = []
@@ -168,15 +176,19 @@ func setup() -> void:
 		for t in S.G.terrs:
 			for i in t.segs.size():
 				if t.segN[i] < 0: coastLines.append(_smooth(t.segs[i]))
+	mark.call("陸・海岸")
 	maskL.clip_children = CanvasItem.CLIP_CHILDREN_ONLY if isJapan else CanvasItem.CLIP_CHILDREN_DISABLED
 	_buildLabels()
+	mark.call("地名")
 	trails = []
 	flashes = []
 	_userMoved = false
 	_buildGlow()
+	mark.call("海岸の明るみ")
 	kick()
 	for n in [seaL, landL, maskL, glyphL, riverL, coastL, seaRouteL]: n.queue_redraw()
 	refreshAll()
+	mark.call("描き直しの準備")
 ## 折れ線を Catmull-Rom でなめらかに（点が粗い架空の地図だけ）
 func _smooth(sg: PackedVector2Array) -> PackedVector2Array:
 	if isJapan or sg.size() < 3: return sg
@@ -338,8 +350,10 @@ func _buildLabels() -> void:
 		var r = rOf(t) + 1
 		put.call(Rect2(t.x - r, t.y - r, r * 2, r * 2), t.id)
 	var order: Array = S.G.terrs.duplicate()
-	var pri = func(t): return (1e6 if t.cap else 0.0) + (t.dev * 1e4 if t.type == "city" else 0.0) + (0.0 if _isSyn(t.name) else 5e3) + t.pop / 100.0
-	order.sort_custom(func(a, b): return pri.call(a) > pri.call(b))
+	# 優先度は先に1回だけ計算する（並べ替えの比べるたびに計算しない）
+	var pri := {}
+	for t in order: pri[t.id] = (1e6 if t.cap else 0.0) + (t.dev * 1e4 if t.type == "city" else 0.0) + (0.0 if _isSyn(t.name) else 5e3) + t.pop / 100.0
+	order.sort_custom(func(a, b): return pri[a.id] > pri[b.id])
 	for t in order:
 		var w: float = font.get_string_size(t.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x + 4
 		var r = rOf(t)
@@ -422,25 +436,41 @@ func _drawLand() -> void:
 	if S.G != null and isJapan and landPts.size(): RenderingServer.canvas_item_add_triangle_array(landL.get_canvas_item(), landIdx, landPts, _fillCols(landPts.size(), LAND_COL))
 ## 海岸の明るみ：海岸線を丸く太らせた形を三角形にして2枚だけ描く
 var glowB = Batch.new()
+## 海岸の明るみ：重いので、地図を先に出してから数コマに分けて裏で作る（新しい地図になったら打ち切る）
+var _glowGen = 0
 func _buildGlow() -> void:
+	_glowGen += 1
+	var gen = _glowGen
 	for c in glowL.get_children(): c.queue_free()
-	glowB.clear()
+	var b = Batch.new()
+	var t0 = Time.get_ticks_msec()
+	var tAll = t0
 	for w in [[19.0, 0.15], [8.5, 0.2]]:
 		var col = Color(1, 1, 1, w[1])
 		var parts = []
 		for ln in coastLines:
 			if ln.size() < 2: continue
+			if Time.get_ticks_msec() - t0 > 10:
+				await get_tree().process_frame
+				t0 = Time.get_ticks_msec()
+				if gen != _glowGen: return
 			for p in Geometry2D.offset_polyline(ln, w[0], Geometry2D.JOIN_ROUND, Geometry2D.END_ROUND): parts.append(p)
 		# 重なりで濃くならないように、近い物どうしをまとめる
-		var merged = _mergeAll(parts)
+		var merged = await _mergeAll(parts, gen)
+		if gen != _glowGen: return
 		for p in merged:
 			if Geometry2D.is_polygon_clockwise(p): continue
-			glowB.poly(p, col)
+			b.poly(p, col)
+	if gen != _glowGen: return
+	glowB = b
 	var holder = Node2D.new()
 	holder.draw.connect(func(): glowB.flush(holder.get_canvas_item()))
 	glowL.add_child(holder)
+	kick()
+	if OS.get_environment("KN_STARTUP") != "": print("STARTUP 海岸の明るみ（裏で） ", Time.get_ticks_msec() - tAll, "ms")
 ## 多数の多角形を、格子で区切って区画ごとにまとめる（全部を一度にまとめると重いので）
-func _mergeAll(parts: Array) -> Array:
+func _mergeAll(parts: Array, gen := -1) -> Array:
+	var ty = Time.get_ticks_msec()
 	var cell = 1500.0
 	var buckets = {}
 	for p in parts:
@@ -451,6 +481,10 @@ func _mergeAll(parts: Array) -> Array:
 		buckets[key].append(p)
 	var out = []
 	for key in buckets:
+		if gen >= 0 and Time.get_ticks_msec() - ty > 10:
+			await get_tree().process_frame
+			ty = Time.get_ticks_msec()
+			if gen != _glowGen: return []
 		var acc = []
 		for p in buckets[key]:
 			if acc.is_empty():
