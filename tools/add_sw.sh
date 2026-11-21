@@ -4,7 +4,7 @@
 #    指紋が同じなら保存した物を返し、ネットワークを使わない（公開をくり返しても、変わっていないエンジン本体は取り直さない）
 #  - index.html：エンジンを起動する前に、最新の sw.js が働き始めるのを待つ（最大3秒。だめなら今までどおり）
 cd "$(dirname "$0")/../build/web" || exit 1
-FILES="index.wasm index.pck jpmap0.bin jpmap1.bin jpmap2.bin jpmap3.bin bgm_peace.ogg bgm_war.ogg index.audio.worklet.js index.audio.position.worklet.js"
+FILES="index.js index.wasm index.pck index.png index.icon.png jpmap0.bin jpmap1.bin jpmap2.bin jpmap3.bin bgm_peace.ogg bgm_war.ogg index.audio.worklet.js index.audio.position.worklet.js"
 MAN=""
 for f in $FILES; do
 	[ -f "$f" ] || continue
