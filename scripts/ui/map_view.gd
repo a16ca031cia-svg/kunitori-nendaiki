@@ -947,7 +947,7 @@ func _drawLabels() -> void:
 		var n: int = cnt.get(na.id, 0)
 		var rel = natRel(sel, na.id) if sel != null and sel >= 0 else null
 		var fsz = int(round((clamp(10 + sqrt(n) * 1.6, 11, 19) if many else clamp(12 + n * 0.5, 13, 25)) * (0.78 if size.x < 640 else 1.0)))
-		var lbl: String = na.get("role", na.name)
+		var lbl: String = na.name
 		var w = fontD.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x
 		var badge: String = REL_JP[rel] if rel != null and rel != "peace" else ""
 		boxes.append({"na": na, "lbl": lbl, "x": p.x, "y": p.y, "w": w, "bw": w + 20 + (46 if badge != "" else 0), "h": fsz * 1.56, "size": fsz, "rel": rel, "badge": badge, "n": n})
