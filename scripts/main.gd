@@ -62,7 +62,6 @@ func _ready() -> void:
 	_setupAudio()
 	S.captured.connect(func(_tid, nid, old): if S.concerns([nid, old]): _sfx("capture", -5.0))
 	S.nation_fell.connect(func(_n): _sfx("fall", -3.0))
-	S.turn_ended.connect(func(): _sfx("turn", -15.0))
 	S.phase_changed.connect(_setPhase)
 	S.auto_changed.connect(func(on): btnAuto.text = "■ 停止" if on else "自動進行")
 	S.game_over.connect(_onGameOver)
@@ -949,6 +948,9 @@ func openHelp() -> void:
 	var s = "[color=#9b9484]すべての国をCPUが動かします。気になる国を選んで、その国の目線で興亡を見届けてください。[/color]\n\n[table=2]"
 	for r in rows: s += "[cell][b][color=#e6c95a]%s[/color][/b]　[/cell][cell]%s[/cell]" % [_esc(r[0]), r[1]]
 	s += "[/table]\n\n[color=#9b9484]地図の国をクリックするとその国が選ばれ、もう一度押すとその国の全体が映ります。マウスを載せると領地の詳しい情報が出ます。選んだ国に関わる戦い・外交だけが知らされます。[/color]"
+	s += "
+
+[font_size=11][color=#9b9484]音：戦時の曲「Taiko drums (seamless loop)」jobro（CC-BY 3.0・OpenGameArt）／平時の曲「Asianoriental1」Tozan、効果音 Kenney・StarNinjas ほか（CC0）[/color][/font_size]"
 	modal("操作方法", _bodyText(s), [_btn("閉じる", closeModal, true)], 560)
 
 # ---------- セーブ／ロード ----------
@@ -1366,20 +1368,23 @@ var _sfxStreams = {}
 var _sfxPlayers = []
 var _sfxNext = 0
 var _sfxLast = {}
+var _battleSfx = []
 func _setupAudio() -> void:
+	# 音の出典は audio/CREDITS.md（フリー素材）
 	for k in ["peace", "war"]:
-		var st: AudioStreamWAV = load("res://audio/bgm_%s.wav" % k)
-		st.loop_mode = AudioStreamWAV.LOOP_FORWARD
-		st.loop_begin = 0
-		st.loop_end = st.data.size() / 2 if st.format == AudioStreamWAV.FORMAT_16_BITS else int(st.get_length() * st.mix_rate)
+		var st: AudioStreamOggVorbis = load("res://audio/bgm_%s.ogg" % k)
+		st.loop = true
 		_bgm[k] = st
 	for i in 2:
 		var p = AudioStreamPlayer.new()
 		p.volume_db = -80.0
 		add_child(p)
 		_bgmPlayers.append(p)
-	for k in ["click", "turn", "notice", "war", "fall", "battle", "capture", "peace"]:
+	for k in ["click", "notice", "fall", "capture", "peace"]:
 		_sfxStreams[k] = load("res://audio/sfx_%s.wav" % k)
+	_sfxStreams["war"] = load("res://audio/sfx_war.ogg")
+	for i in [1, 3, 6]: _battleSfx.append(load("res://audio/sfx_battle%d.ogg" % i))
+	_sfxStreams["battle"] = _battleSfx[0]
 	for i in 6:
 		var p = AudioStreamPlayer.new()
 		add_child(p)
@@ -1388,12 +1393,11 @@ func _setupAudio() -> void:
 func _sfx(name: String, db := 0.0) -> void:
 	if not S.UI.get("sfx", true) or not _sfxStreams.has(name): return
 	var now = Time.get_ticks_msec()
-	var gap = 600 if name == "turn" else 150
-	if now - int(_sfxLast.get(name, -10000)) < gap: return
+	if now - int(_sfxLast.get(name, -10000)) < 150: return
 	_sfxLast[name] = now
 	var p: AudioStreamPlayer = _sfxPlayers[_sfxNext]
 	_sfxNext = (_sfxNext + 1) % _sfxPlayers.size()
-	p.stream = _sfxStreams[name]
+	p.stream = _battleSfx.pick_random() if name == "battle" else _sfxStreams[name]
 	p.volume_db = db
 	p.play()
 ## 選んだ国が戦争中（選んでいなければ世の中で戦が多い時）は戦の曲、それ以外は平時の曲。切り替えは重ねてゆっくり
@@ -1416,5 +1420,5 @@ func _updateBgm(force := false) -> void:
 		nxt.stream = _bgm[want]
 		nxt.volume_db = -40.0
 		nxt.play()
-		tw.tween_property(nxt, "volume_db", -9.0 if want == "peace" else -10.0, 1.5)
+		tw.tween_property(nxt, "volume_db", -8.0 if want == "peace" else -13.0, 1.5)
 	tw.chain().tween_callback(func(): if cur.volume_db <= -79.0: cur.stop())

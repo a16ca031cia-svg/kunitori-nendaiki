@@ -17,7 +17,7 @@
 | `scripts/ui/map_view.gd` | 地図の描画と操作 |
 | `scripts/jp_data.gd`・`data/` | 日本地図のデータ（地点・街道・川、県の形、初期状態4種類） |
 | `fonts/` | Zen Kaku Gothic New・Shippori Mincho B1（SIL Open Font License） |
-| `audio/` | BGM（平時・戦時）と効果音。素材は使わず `tools/gen_audio.gd` で合成したもの |
+| `audio/` | BGM（平時・戦時）と効果音。フリー素材（出典は `audio/CREDITS.md`） |
 | `tools/` | まとめ・書き出し・公開・確認用のスクリプト |
 
 ## 遊び方の確認（ローカル）
@@ -46,4 +46,5 @@ powershell -ExecutionPolicy Bypass -File tools\publish.ps1 -Message "変更内�
 ## ライセンス表記
 
 - フォント：Zen Kaku Gothic New、Shippori Mincho B1（SIL Open Font License 1.1、`fonts/OFL_*.txt`）
+- 音：戦時の曲「Taiko drums (seamless loop)」jobro（CC-BY 3.0、OpenGameArt）。ほかはCC0（Tozan「Asianoriental1」、Kenney「Interface Sounds」、StarNinjas の剣の音など）。詳しくは `audio/CREDITS.md`
 - 日本地図の県の形：元の HTML 版に含まれていたデータ（利用者提供の japan.geojson を変換したもの）
