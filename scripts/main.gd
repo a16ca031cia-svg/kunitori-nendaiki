@@ -1585,7 +1585,7 @@ func _setupAudio() -> void:
 	_applyVolume()
 	# 曲（平時 1.9MB・戦時 10MB）は起動を軽くするため、ブラウザ版では書き出しに含めず、起動後に裏で読み込む
 	for k in ["peace", "war"]:
-		if OS.has_feature("web"): _fetchBgm(k)
+		if OS.has_feature("web") or OS.get_environment("KN_FAKEWEB") != "": _fetchBgm(k)
 		else:
 			var st: AudioStreamOggVorbis = load("res://audio/bgm_%s.ogg" % k)
 			st.loop = true
@@ -1652,7 +1652,7 @@ func openVolume() -> void:
 	vb.add_child(note)
 	modal("音量", vb, [_btn("閉じる", closeModal, true)], 420)
 func _fetchBgm(k: String) -> void:
-	var href = str(JavaScriptBridge.eval("location.href.split('#')[0].split('?')[0]", true))
+	var href = str(JavaScriptBridge.eval("location.href.split('#')[0].split('?')[0]", true)) if OS.has_feature("web") else OS.get_environment("KN_FAKEWEB")
 	var base = href.substr(0, href.rfind("/") + 1)
 	var req = HTTPRequest.new()
 	add_child(req)
