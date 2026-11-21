@@ -461,18 +461,18 @@ func _fetchJpMap(i: int) -> bool:
 	var href = str(JavaScriptBridge.eval("location.href.split('#')[0].split('?')[0]", true)) if OS.has_feature("web") else OS.get_environment("KN_FAKEWEB")
 	var req = HTTPRequest.new()
 	add_child(req)
-	var tmp = "user://jpmap%d.part" % i
-	req.download_file = tmp
 	req.request(href.substr(0, href.rfind("/") + 1) + "jpmap%d.bin" % i)
 	var res = await req.request_completed
 	req.queue_free()
 	_jpFetching[i] = false
 	S.bootMark("地図%d 取得 結果=%d コード=%d" % [i, res[0], res[1]])
-	if res[0] != HTTPRequest.RESULT_SUCCESS or res[1] != 200:
-		DirAccess.remove_absolute(tmp)
-		return false
-	var rn = DirAccess.rename_absolute(tmp, "user://jpmap%d.bin" % i)
-	S.bootMark("地図%d 名前の付け替え=%d あるか=%s" % [i, rn, str(FileAccess.file_exists(S.jpMapPath(i)))])
+	if res[0] != HTTPRequest.RESULT_SUCCESS or res[1] != 200 or res[3].size() < 1000: return false
+	# 取ってきた中身をそのまま user:// に書く（ブラウザ版ではファイルの名前の付け替えが使えないため）
+	var fw = FileAccess.open("user://jpmap%d.bin" % i, FileAccess.WRITE)
+	if fw == null: return false
+	fw.store_buffer(res[3])
+	fw.close()
+	S.bootMark("地図%d 保存 あるか=%s" % [i, str(FileAccess.file_exists(S.jpMapPath(i)))])
 	return FileAccess.file_exists(S.jpMapPath(i))
 ## タイトル画面が出たら、残りの地図も裏で取っておく（次からすぐ始まる）
 func _prefetchJpMaps() -> void:

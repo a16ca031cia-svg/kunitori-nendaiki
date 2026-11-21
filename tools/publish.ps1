@@ -31,6 +31,8 @@ New-Item -ItemType Directory -Force build\web | Out-Null
 if (-not (Test-Path build\web\index.pck)) { throw "書き出しに失敗しました" }
 Copy-Item audio\bgm_war.ogg, audio\bgm_peace.ogg build\web\   # 曲は起動後に読み込む（書き出しに含めない）
 foreach ($i in 0..3) { Copy-Item "data\jp\map$i.bin" "build\web\jpmap$i.bin" }   # 日本地図も使う時に取ってくる
+& "C:\Program Files\Git\usr\bin\sh.exe" tools/add_sw.sh   # 大きなファイルをブラウザに保存して使い回す（sw.js）
+if (-not (Test-Path build\web\sw.js)) { throw "sw.js を作れませんでした" }
 Write-Host "Web 版を書き出しました"
 
 # 3) ソース
