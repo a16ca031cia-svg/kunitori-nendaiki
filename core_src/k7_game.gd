@@ -81,11 +81,13 @@ func loadPrefs() -> void:
 	if p.get("battle") is bool: CFG.showCpuBattle = p.battle
 	if p.get("dip") is bool: CFG.showDip = p.dip
 	if p.get("log") is bool: UI.logOn = p.log
+	UI.bgm = p.get("bgm", true) if p.get("bgm") is bool else true
+	UI.sfx = p.get("sfx", true) if p.get("sfx") is bool else true
 	setSpeed(int(p.get("speed", 1)))
 func savePrefs() -> void:
 	var f := FileAccess.open(PREF_PATH, FileAccess.WRITE)
 	if f == null: return
-	f.store_string(JSON.stringify({"speed": UI.speed, "battle": CFG.showCpuBattle, "dip": CFG.showDip, "log": UI.logOn}))
+	f.store_string(JSON.stringify({"speed": UI.speed, "battle": CFG.showCpuBattle, "dip": CFG.showDip, "log": UI.logOn, "bgm": UI.get("bgm", true), "sfx": UI.get("sfx", true)}))
 	f.close()
 
 # ---------- セーブ／ロード（3スロット） ----------

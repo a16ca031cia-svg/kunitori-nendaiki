@@ -3,6 +3,7 @@ extends "res://scripts/core/k5_econ.gd"
 
 signal phase_changed(nid, sub: String)   # nid=null で消す
 signal refreshed                         # 画面を描き直す
+signal beat                              # 軍団が一手動いた（軽い描き直し）
 signal turn_ended
 ## 画面側が「その領地は今見えているか」を答える（無ければ常に見えている扱い）
 var onScreenFn: Callable = Callable()
@@ -922,7 +923,7 @@ func cpuBeat(a) -> void:
 	if a.owner != f and not (atWar(a.owner, f) and T(a.at).owner == f): return
 	if onScreenFn.is_valid() and not onScreenFn.call(T(a.at)): return
 	if BEAT_SPENT >= BEAT_MAX: return
-	refreshed.emit()
+	beat.emit()
 	var d: int = min(CFG.cpuDelay, BEAT_MAX - BEAT_SPENT)
 	BEAT_SPENT += d
 	await sleep_ms(d)

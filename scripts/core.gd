@@ -1,4 +1,4 @@
-# 自動生成：core_src/*.gd をまとめたもの（直接編集しない。tools/build_core.sh か publish.ps1 で作り直す）
+# 自動生成：core_src/*.gd をまとめたもの（直接編集しない。tools/build_core.sh で作り直す）
 extends Node
 
 # ==================== k0_base.gd ====================
@@ -1243,6 +1243,7 @@ func capture(tid: int, nid: int, _byArmy = null) -> void:
 		addWarScore(nid, old, WAR.scoreTerr + (WAR.scoreCapital if t.cap else 0))
 		G.dip.taken[nid][old] = G.dip.taken[nid][old] + 1
 	chron("%s 陥落 — %s が %s より奪取" % [t.name, nm, on], nid, "fall")
+	captured.emit(tid, nid, old)
 	invalidateTerr(tid)
 	flashTerr(tid)
 	if t.cap and old >= 0:
@@ -1288,6 +1289,7 @@ func checkNations() -> void:
 			if facOf(na.id) != null: leaveFaction(na.id, "quiet")
 			logMsg("%s は滅亡しました" % na.name, "war")
 			chron("%s 滅亡" % na.name, na.id, "end")
+			nation_fell.emit(na.id)
 			for v in G.nations:
 				if v.alive and v.lord == na.id: freeVassal(v.id, "主君の滅亡")
 	warSuccession()
@@ -1315,6 +1317,8 @@ func endGame(winner: int) -> void:
 	UI.auto = false
 	game_over.emit(winner)
 signal game_over(winner: int)
+signal captured(tid: int, nid: int, old: int)
+signal nation_fell(nid: int)
 
 # ---------- 戦闘計算 ----------
 func sideStats(list: Array, t: Dictionary, isDef: bool) -> Dictionary:
@@ -3918,6 +3922,7 @@ func cpuWarGoal(a: int, b: int) -> String:
 
 signal phase_changed(nid, sub: String)   # nid=null で消す
 signal refreshed                         # 画面を描き直す
+signal beat                              # 軍団が一手動いた（軽い描き直し）
 signal turn_ended
 ## 画面側が「その領地は今見えているか」を答える（無ければ常に見えている扱い）
 var onScreenFn: Callable = Callable()
@@ -4837,7 +4842,7 @@ func cpuBeat(a) -> void:
 	if a.owner != f and not (atWar(a.owner, f) and T(a.at).owner == f): return
 	if onScreenFn.is_valid() and not onScreenFn.call(T(a.at)): return
 	if BEAT_SPENT >= BEAT_MAX: return
-	refreshed.emit()
+	beat.emit()
 	var d: int = min(CFG.cpuDelay, BEAT_MAX - BEAT_SPENT)
 	BEAT_SPENT += d
 	await sleep_ms(d)
@@ -4926,11 +4931,13 @@ func loadPrefs() -> void:
 	if p.get("battle") is bool: CFG.showCpuBattle = p.battle
 	if p.get("dip") is bool: CFG.showDip = p.dip
 	if p.get("log") is bool: UI.logOn = p.log
+	UI.bgm = p.get("bgm", true) if p.get("bgm") is bool else true
+	UI.sfx = p.get("sfx", true) if p.get("sfx") is bool else true
 	setSpeed(int(p.get("speed", 1)))
 func savePrefs() -> void:
 	var f = FileAccess.open(PREF_PATH, FileAccess.WRITE)
 	if f == null: return
-	f.store_string(JSON.stringify({"speed": UI.speed, "battle": CFG.showCpuBattle, "dip": CFG.showDip, "log": UI.logOn}))
+	f.store_string(JSON.stringify({"speed": UI.speed, "battle": CFG.showCpuBattle, "dip": CFG.showDip, "log": UI.logOn, "bgm": UI.get("bgm", true), "sfx": UI.get("sfx", true)}))
 	f.close()
 
 # ---------- セーブ／ロード（3スロット） ----------

@@ -58,6 +58,11 @@ func _ready() -> void:
 	S.log_changed.connect(_renderLog)
 	S.notified.connect(_toast)
 	S.refreshed.connect(refresh)
+	S.beat.connect(_onBeat)
+	_setupAudio()
+	S.captured.connect(func(_tid, nid, old): if S.concerns([nid, old]): _sfx("capture", -5.0))
+	S.nation_fell.connect(func(_n): _sfx("fall", -3.0))
+	S.turn_ended.connect(func(): _sfx("turn", -15.0))
 	S.phase_changed.connect(_setPhase)
 	S.auto_changed.connect(func(on): btnAuto.text = "■ 停止" if on else "自動進行")
 	S.game_over.connect(_onGameOver)
@@ -123,6 +128,7 @@ func _btn(text: String, cb: Callable, primary := false) -> Button:
 	var b = Button.new()
 	b.text = text
 	b.focus_mode = Control.FOCUS_NONE
+	b.pressed.connect(func(): _sfx("click", -12.0))
 	b.pressed.connect(cb)
 	if primary:
 		b.add_theme_stylebox_override("normal", _sb(Color("#7a6219"), Color("#a98c2c"), 1, 2, 5))
@@ -196,6 +202,8 @@ func _buildUI() -> void:
 	pm.add_check_item("戦闘表示", 0)
 	pm.add_check_item("外交報告", 1)
 	pm.add_check_item("出来事の表示", 2)
+	pm.add_check_item("音楽", 6)
+	pm.add_check_item("効果音", 7)
 	pm.add_separator()
 	pm.add_item("セーブ／ロード", 3)
 	pm.add_item("操作方法（?）", 4)
@@ -402,6 +410,7 @@ func _loadSlot(i: int) -> void:
 	closeModal()
 	if not S.loadSlot(i): _toast("読み込めませんでした", "err")
 func _onStarted() -> void:
+	_updateBgm(true)
 	_hideTitle()
 	closeModal()
 	_natPickKey = ""
@@ -421,6 +430,7 @@ func refresh() -> void:
 	_renderLog()
 	map.refreshAll()
 	btnEnd.disabled = S.UI.busy or S.auto_on
+	_updateBgm()
 func _col(c) -> String: return c.to_html(false) if c is Color else String(c).trim_prefix("#")
 func _cs(text: String, c) -> String: return "[color=#%s]%s[/color]" % [_col(c), text]
 func _esc(s: String) -> String: return s.replace("[", "[lb]")
@@ -841,6 +851,10 @@ func _onMenu(id: int) -> void:
 		2:
 			S.UI.logOn = not S.UI.logOn
 			_renderLog()
+		6:
+			S.UI.bgm = not S.UI.get("bgm", true)
+			_updateBgm(true)
+		7: S.UI.sfx = not S.UI.get("sfx", true)
 		3: if S.G != null: openSave(false)
 		4: openHelp()
 		5:
@@ -854,6 +868,8 @@ func _syncMenu() -> void:
 	pm.set_item_checked(pm.get_item_index(0), S.CFG.showCpuBattle)
 	pm.set_item_checked(pm.get_item_index(1), S.CFG.showDip)
 	pm.set_item_checked(pm.get_item_index(2), S.UI.logOn)
+	pm.set_item_checked(pm.get_item_index(6), S.UI.get("bgm", true))
+	pm.set_item_checked(pm.get_item_index(7), S.UI.get("sfx", true))
 
 # ============================================================
 #   窓（モーダル）
@@ -1095,6 +1111,10 @@ func _onModalMeta(meta) -> void:
 
 # ---------- 外交の知らせ ----------
 func _showDip(ev: Dictionary) -> void:
+	var snd = "notice"
+	if ["war", "prep", "revolt", "join", "unally", "unpact", "surrender", "annex"].has(ev.kind): snd = "war"
+	elif ["peace", "ally", "renew", "pact", "trade", "faction"].has(ev.kind) and ev.ok: snd = "peace"
+	_sfx(snd, -4.0)
 	var K: Dictionary = S.DIP_KIND.get(ev.kind, S.DIP_KIND.war)
 	var A = S.NAT(ev.from)
 	var B = S.NAT(ev.to)
@@ -1121,6 +1141,7 @@ func _showDip(ev: Dictionary) -> void:
 
 # ---------- 戦闘画面（観戦） ----------
 func _showBattle(A: Array, D: Array, t: Dictionary) -> void:
+	_sfx("battle", -4.0)
 	var st0 = [S.sumTroops(A), S.sumTroops(D)]
 	var body = _rtl()
 	var speed = [int(S.UI.get("watchSpeed", 4))]
@@ -1328,3 +1349,72 @@ func _debugHash() -> void:
 			break
 	elif sel.is_valid_int(): selectNation(int(sel), true)
 	refresh()
+## 軍団が一手動いた時：上の帯・出来事・地図の動く層だけ描き直す（右の欄は作り直さない）
+func _onBeat() -> void:
+	if S.G == null: return
+	_renderTop()
+	_renderLog()
+	map.beatRefresh()
+
+# ============================================================
+#   音（BGM・効果音）：すべて tools/gen_audio.gd で合成したもの
+# ============================================================
+var _bgm = {}
+var _bgmPlayers = []
+var _bgmCur = ""
+var _sfxStreams = {}
+var _sfxPlayers = []
+var _sfxNext = 0
+var _sfxLast = {}
+func _setupAudio() -> void:
+	for k in ["peace", "war"]:
+		var st: AudioStreamWAV = load("res://audio/bgm_%s.wav" % k)
+		st.loop_mode = AudioStreamWAV.LOOP_FORWARD
+		st.loop_begin = 0
+		st.loop_end = st.data.size() / 2 if st.format == AudioStreamWAV.FORMAT_16_BITS else int(st.get_length() * st.mix_rate)
+		_bgm[k] = st
+	for i in 2:
+		var p = AudioStreamPlayer.new()
+		p.volume_db = -80.0
+		add_child(p)
+		_bgmPlayers.append(p)
+	for k in ["click", "turn", "notice", "war", "fall", "battle", "capture", "peace"]:
+		_sfxStreams[k] = load("res://audio/sfx_%s.wav" % k)
+	for i in 6:
+		var p = AudioStreamPlayer.new()
+		add_child(p)
+		_sfxPlayers.append(p)
+## 効果音（同じ音は短い間に重ねて鳴らさない）
+func _sfx(name: String, db := 0.0) -> void:
+	if not S.UI.get("sfx", true) or not _sfxStreams.has(name): return
+	var now = Time.get_ticks_msec()
+	var gap = 600 if name == "turn" else 150
+	if now - int(_sfxLast.get(name, -10000)) < gap: return
+	_sfxLast[name] = now
+	var p: AudioStreamPlayer = _sfxPlayers[_sfxNext]
+	_sfxNext = (_sfxNext + 1) % _sfxPlayers.size()
+	p.stream = _sfxStreams[name]
+	p.volume_db = db
+	p.play()
+## 選んだ国が戦争中（選んでいなければ世の中で戦が多い時）は戦の曲、それ以外は平時の曲。切り替えは重ねてゆっくり
+func _updateBgm(force := false) -> void:
+	if _bgmPlayers.is_empty(): return
+	var want = ""
+	if S.UI.get("bgm", true) and S.G != null and titleScr == null:
+		var sel = S.UI.selNat
+		var war: bool = S.inWar(sel) if sel != null and sel >= 0 else S.G.wars.size() >= max(3, S.G.nations.size() / 8)
+		want = "war" if war else "peace"
+	if want == _bgmCur and not force: return
+	if want == _bgmCur and force and want != "": return
+	_bgmCur = want
+	var cur: AudioStreamPlayer = _bgmPlayers[0]
+	var nxt: AudioStreamPlayer = _bgmPlayers[1]
+	_bgmPlayers.reverse()
+	var tw = create_tween().set_parallel(true)
+	tw.tween_property(cur, "volume_db", -80.0, 1.5)
+	if want != "":
+		nxt.stream = _bgm[want]
+		nxt.volume_db = -40.0
+		nxt.play()
+		tw.tween_property(nxt, "volume_db", -9.0 if want == "peace" else -10.0, 1.5)
+	tw.chain().tween_callback(func(): if cur.volume_db <= -79.0: cur.stop())

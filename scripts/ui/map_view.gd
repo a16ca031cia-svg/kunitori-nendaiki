@@ -18,6 +18,8 @@ var svD: SubViewport
 var droot: Node2D
 var _kickReq = true
 var _kickD = true
+var _fitPending = false
+var _userMoved = false   # 自分で動かすまでは、大きさが変わったら全体に合わせ直す
 ## 次のフレームで地図（動かない層と動く層の両方）を描き直す
 func kick() -> void:
 	_kickReq = true
@@ -120,7 +122,9 @@ func _ready() -> void:
 	labelL.set_anchors_preset(Control.PRESET_FULL_RECT)
 	labelL.draw.connect(_drawLabels)
 	add_child(labelL)
-	resized.connect(func(): _applyView())
+	resized.connect(func():
+		if (_fitPending or not _userMoved) and size.x >= 50 and size.y >= 50 and S.G != null: fitView()
+		else: _applyView())
 	S.map_changed.connect(_onMapChanged)
 	S.fx.connect(_onFx)
 func _layer(parent: Node, fn: Callable) -> Node2D:
@@ -152,6 +156,7 @@ func setup() -> void:
 	_buildLabels()
 	trails = []
 	flashes = []
+	_userMoved = false
 	_buildGlow()
 	kick()
 	for n in [seaL, landL, maskL, glyphL, riverL, coastL, seaRouteL]: n.queue_redraw()
@@ -361,6 +366,21 @@ func refreshAll() -> void:
 	armyL.queue_redraw()
 	labelL.queue_redraw()
 	fxL.queue_redraw()
+## 軍団が一手動いた時の軽い描き直し（土地の持ち主が変わった時だけ地図の塗りと国境も）
+func beatRefresh() -> void:
+	if S.G == null or S.G != G_: return
+	if _dirtyOwn:
+		_dirtyOwn = false
+		_updateColors()
+		terrL.queue_redraw()
+		borderL.queue_redraw()
+		relL.queue_redraw()
+		markL.queue_redraw()
+		_kickReq = true
+	armyL.queue_redraw()
+	fxL.queue_redraw()
+	labelL.queue_redraw()
+	_kickD = true
 func _mix(hex: String, base: Color, a: float) -> Color:
 	var c = Color(hex)
 	return Color(c.r * a + base.r * (1 - a), c.g * a + base.g * (1 - a), c.b * a + base.b * (1 - a))
@@ -558,15 +578,22 @@ func _drawBorders() -> void:
 	under.flush(borderL.get_canvas_item())
 	over.flush(borderL.get_canvas_item())
 	_lastBorderScale = vs
+## 国ごとの国境の線（持ち主が変わるまで使い回す。全領地を1回だけ見る）
+var _nbKey = ""
+var _nbCache = {}
 func natBorder(nid: int) -> Array:
-	var out = []
-	for t in S.G.terrs:
-		if t.owner != nid: continue
-		for i in t.segs.size():
-			var j: int = t.segN[i]
-			if j >= 0 and S.T(j).owner == nid: continue
-			out.append(_smooth(t.segs[i]))
-	return out
+	var k = str(S.G.get("ownRev", 0)) + "_" + str(S.G.terrs.size()) + "_" + str(S.G.turn)
+	if k != _nbKey or G_ != S.G:
+		_nbKey = k
+		_nbCache = {}
+		for t in S.G.terrs:
+			if t.owner < 0: continue
+			for i in t.segs.size():
+				var j: int = t.segN[i]
+				if j >= 0 and S.T(j).owner == t.owner: continue
+				if not _nbCache.has(t.owner): _nbCache[t.owner] = []
+				_nbCache[t.owner].append(_smooth(t.segs[i]))
+	return _nbCache.get(nid, [])
 func natRel(from: int, nid: int) -> String:
 	if from == nid: return "self"
 	if S.isVassal(nid, from): return "vassal"
@@ -725,26 +752,45 @@ func fmtK(tot: int) -> String:
 	if tot >= 10000: return str(int(round(tot / 1000.0))) + "k"
 	if tot >= 1000: return "%.1fk" % (tot / 1000.0)
 	return str(tot)
+## 盾の形（原点まわり・三角形に分け済み）を一度だけ作る
+var _shieldPts = PackedVector2Array()
+var _shieldIdx = PackedInt32Array()
+var _shieldLine = PackedVector2Array()
+func _shieldShape() -> void:
+	if _shieldPts.size(): return
+	var hw = 13.5
+	var ht = 13.0
+	var s = PackedVector2Array([Vector2(-hw, -ht), Vector2(hw, -ht), Vector2(hw, ht - 8)])
+	s.append_array(_quad(Vector2(hw, ht - 8), Vector2(hw, ht - 1), Vector2(0, ht + 3.5)).slice(1))
+	s.append_array(_quad(Vector2(0, ht + 3.5), Vector2(-hw, ht - 1), Vector2(-hw, ht - 8)).slice(1, 8))
+	_shieldPts = s
+	_shieldIdx = Geometry2D.triangulate_polygon(s)
+	_shieldLine = s.duplicate()
+	_shieldLine.append(s[0])
 func _drawArmies() -> void:
 	if S.G == null: return
+	_shieldShape()
 	var by = _armySlots()
 	var vr = visRect().grow(130)
+	var b = Batch.new()
 	if vs < 0.18:
 		var r = 2.6 / vs
 		var shows = {}
-		for o in S.G.nations:
-			var v: bool = o.id == S.UI.selNat or S.inWar(o.id)
-			shows[o.id] = v
+		for o in S.G.nations: shows[o.id] = o.id == S.UI.selNat or S.inWar(o.id)
 		for tid in by:
 			var tt = S.T(tid)
 			if not vr.has_point(Vector2(tt.x, tt.y)): continue
 			var o: int = by[tid][0].owner
 			if not shows.get(o, false): continue
 			var rc = Rect2(tt.x + 26 - r, tt.y - 12 - r, r * 2, r * 2)
-			armyL.draw_rect(rc, Color(S.ncol(o)))
-			armyL.draw_rect(rc, Color8(20, 16, 10, 217), false, 0.9 / vs)
+			b.rect(rc.grow(0.9 / vs), Color8(20, 16, 10, 217))
+			b.rect(rc, Color(S.ncol(o)))
+		b.flush(armyL.get_canvas_item())
 		return
 	var small = vs < 0.35
+	var texts = []
+	var edge = Color("#241d12")
+	var white = Color8(255, 248, 228, 242)
 	for tid in by:
 		var tt = S.T(tid)
 		if not vr.has_point(Vector2(tt.x, tt.y)): continue
@@ -756,52 +802,53 @@ func _drawArmies() -> void:
 			var txt = "+%d／%s" % [rest.size(), fmtK(sum)]
 			var c = Vector2(tt.x, tt.y) + slotOff(6)
 			var w = fontB.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x + 14
-			armyL.draw_rect(Rect2(c.x - w / 2, c.y - 10, w, 20), Color8(20, 24, 32, 230))
-			armyL.draw_rect(Rect2(c.x - w / 2, c.y - 10, w, 20), Color(S.ncol(rest[0].owner)), false, 1.6)
-			armyL.draw_string(fontB, c + Vector2(-w / 2 + 7, 5), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("#efe7d2"))
+			b.rect(Rect2(c.x - w / 2 - 1.6, c.y - 11.6, w + 3.2, 23.2), Color(S.ncol(rest[0].owner)))
+			b.rect(Rect2(c.x - w / 2, c.y - 10, w, 20), Color8(20, 24, 32, 240))
+			if not small: texts.append([c + Vector2(-w / 2 + 7, 5), txt, 12, false])
 		for i in min(6, all.size()):
 			var a: Dictionary = all[i]
 			var p = armyPos(a, i)
-			var act: bool = S.UI.actArmy == a
-			if act: armyL.draw_arc(p, 22 + sin(Time.get_ticks_msec() / 180.0) * 3, 0, TAU, 28, Color(1, 1, 1, 0.65), 3)
-			var hw = 13.5
-			var ht = 13.0
-			var shield = PackedVector2Array([p + Vector2(-hw, -ht), p + Vector2(hw, -ht), p + Vector2(hw, ht - 8)])
-			shield.append_array(_quad(p + Vector2(hw, ht - 8), p + Vector2(hw, ht - 1), p + Vector2(0, ht + 3.5)).slice(1))
-			shield.append_array(_quad(p + Vector2(0, ht + 3.5), p + Vector2(-hw, ht - 1), p + Vector2(-hw, ht - 8)).slice(1, 8))
-			_cpoly(armyL, shield, Color(S.ncol(a.owner)))
-			shield.append(shield[0])
-			armyL.draw_polyline(shield, Color("#241d12"), 1.8)
+			if S.UI.actArmy == a: b.ring(p, 22 + sin(Time.get_ticks_msec() / 180.0) * 3, 3, Color(1, 1, 1, 0.65), 24)
+			var pts = PackedVector2Array()
+			for q in _shieldPts: pts.append(q + p)
+			b.mesh(pts, _shieldIdx, Color(S.ncol(a.owner)))
+			var ln = PackedVector2Array()
+			for q in _shieldLine: ln.append(q + p)
+			b.polyline(ln, 1.8, edge)
 			if small: continue
-			_troopGlyph(armyL, mainKind(a), p + Vector2(0, -1.5), Color8(255, 248, 228, 242))
-			var txt2 = fmtK(S.total(a.t))
-			var w2 = fontB.get_string_size(txt2, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
-			armyL.draw_string_outline(fontB, p + Vector2(-w2 / 2, ht + 15), txt2, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, 4, Color8(232, 222, 196, 242))
-			armyL.draw_string(fontB, p + Vector2(-w2 / 2, ht + 15), txt2, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, INK)
-			if a.path.size():
-				var tri = PackedVector2Array([p + Vector2(15.5, -6), p + Vector2(23, -1), p + Vector2(15.5, 4)])
-				_cpoly(armyL, tri, Color("#efe7d2"))
-func _troopGlyph(c: CanvasItem, k: String, p: Vector2, col: Color) -> void:
+			_troopGlyph(b, mainKind(a), p + Vector2(0, -1.5), white)
+			if a.path.size(): b.tri(p + Vector2(15.5, -6), p + Vector2(23, -1), p + Vector2(15.5, 4), Color("#efe7d2"))
+			texts.append([p, fmtK(S.total(a.t)), 11, true])
+	b.flush(armyL.get_canvas_item())
+	for tx in texts:
+		if tx[3]:
+			var w2 = fontB.get_string_size(tx[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+			var pos = tx[0] + Vector2(-w2 / 2, 28)
+			armyL.draw_string_outline(fontB, pos, tx[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, 4, Color8(232, 222, 196, 242))
+			armyL.draw_string(fontB, pos, tx[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, INK)
+		else:
+			armyL.draw_string(fontB, tx[0], tx[1], HORIZONTAL_ALIGNMENT_LEFT, -1, tx[2], Color("#efe7d2"))
+func _troopGlyph(b, k: String, p: Vector2, col: Color) -> void:
 	match k:
 		"inf":
-			_cpoly(c, PackedVector2Array([p + Vector2(0, -8.5), p + Vector2(1.5, -5.5), p + Vector2(1.5, 1.4), p + Vector2(-1.5, 1.4), p + Vector2(-1.5, -5.5)]), col)
-			c.draw_rect(Rect2(p + Vector2(-5, 1.4), Vector2(10, 2.1)), col)
-			c.draw_rect(Rect2(p + Vector2(-1.1, 3.5), Vector2(2.2, 3.6)), col)
-			c.draw_rect(Rect2(p + Vector2(-2.6, 7.1), Vector2(5.2, 1.8)), col)
+			b.poly(PackedVector2Array([p + Vector2(0, -8.5), p + Vector2(1.5, -5.5), p + Vector2(1.5, 1.4), p + Vector2(-1.5, 1.4), p + Vector2(-1.5, -5.5)]), col)
+			b.rect(Rect2(p + Vector2(-5, 1.4), Vector2(10, 2.1)), col)
+			b.rect(Rect2(p + Vector2(-1.1, 3.5), Vector2(2.2, 3.6)), col)
+			b.rect(Rect2(p + Vector2(-2.6, 7.1), Vector2(5.2, 1.8)), col)
 		"spe":
-			c.draw_line(p + Vector2(-5.5, 8), p + Vector2(4.4, -5), col, 2)
-			c.draw_line(p + Vector2(5.5, 8), p + Vector2(-4.4, -5), col, 2)
-			_cpoly(c, PackedVector2Array([p + Vector2(5.6, -8.6), p + Vector2(6.2, -3.4), p + Vector2(2.6, -5.2)]), col)
-			_cpoly(c, PackedVector2Array([p + Vector2(-5.6, -8.6), p + Vector2(-2.6, -5.2), p + Vector2(-6.2, -3.4)]), col)
+			b.line(p + Vector2(-5.5, 8), p + Vector2(4.4, -5), 2, col)
+			b.line(p + Vector2(5.5, 8), p + Vector2(-4.4, -5), 2, col)
+			b.tri(p + Vector2(5.6, -8.6), p + Vector2(6.2, -3.4), p + Vector2(2.6, -5.2), col)
+			b.tri(p + Vector2(-5.6, -8.6), p + Vector2(-2.6, -5.2), p + Vector2(-6.2, -3.4), col)
 		"arc":
-			c.draw_arc(p + Vector2(-3.6, 0), 7.4, -1.15, 1.15, 12, col, 2)
-			c.draw_line(p + Vector2(-0.6, -6.7), p + Vector2(-0.6, 6.7), col, 1.1)
-			c.draw_line(p + Vector2(-6.5, 0), p + Vector2(5.2, 0), col, 1.7)
-			_cpoly(c, PackedVector2Array([p + Vector2(8.4, 0), p + Vector2(4, -2.4), p + Vector2(4, 2.4)]), col)
+			b.ring(p + Vector2(-3.6, 0), 7.4, 2, col, 10, -1.15, 1.15)
+			b.line(p + Vector2(-0.6, -6.7), p + Vector2(-0.6, 6.7), 1.1, col)
+			b.line(p + Vector2(-6.5, 0), p + Vector2(5.2, 0), 1.7, col)
+			b.tri(p + Vector2(8.4, 0), p + Vector2(4, -2.4), p + Vector2(4, 2.4), col)
 		_:
-			c.draw_arc(p + Vector2(0, -0.5), 6.4, PI * 0.12, PI * 0.88, 14, col, 3)
-			c.draw_circle(p + Vector2(-6.3, 1.2), 1.5, col)
-			c.draw_circle(p + Vector2(6.3, 1.2), 1.5, col)
+			b.ring(p + Vector2(0, -0.5), 6.4, 3, col, 12, PI * 0.12, PI * 0.88)
+			b.circle(p + Vector2(-6.3, 1.2), 1.5, col, 6)
+			b.circle(p + Vector2(6.3, 1.2), 1.5, col, 6)
 
 # ---------- 演出 ----------
 func _onFx(kind: String, arg) -> void:
@@ -1010,6 +1057,10 @@ func _applyView() -> void:
 	view_changed.emit()
 func fitView() -> void:
 	if S.G == null: return
+	if size.x < 50 or size.y < 50:
+		_fitPending = true
+		return
+	_fitPending = false
 	var x0 = 0.0
 	var y0 = 0.0
 	var x1: float = S.G.W
@@ -1039,6 +1090,7 @@ func clampView() -> void:
 	vy = (S.G.H - vh) / 2 if vh >= S.G.H + m * 2 else clamp(vy, -m, S.G.H + m - vh)
 	_applyView()
 func zoomAt(f: float, px: float, py: float) -> void:
+	_userMoved = true
 	if S.G == null: return
 	var w = s2w(Vector2(px, py))
 	vs = clamp(vs * f, min(size.x / S.G.W, size.y / S.G.H) * 0.5, 3.2)
@@ -1046,12 +1098,14 @@ func zoomAt(f: float, px: float, py: float) -> void:
 	vy = w.y - py / vs
 	clampView()
 func focusOn(tid: int) -> void:
+	_userMoved = true
 	var t = S.T(tid)
 	vx = t.x - size.x / (2 * vs)
 	vy = t.y - size.y / (2 * vs)
 	clampView()
 	S.flashTerr(tid)
 func frameNation(nid: int) -> void:
+	_userMoved = true
 	_natLabelAt()
 	if not _natBox.has(nid): return
 	var bb: Rect2 = _natBox[nid]
@@ -1126,6 +1180,7 @@ func _gui_input(ev: InputEvent) -> void:
 			var d = ev.position - Vector2(drag.x, drag.y)
 			if abs(d.x) + abs(d.y) > 4: drag.moved = true
 			if drag.moved:
+				_userMoved = true
 				vx = drag.vx - d.x / vs
 				vy = drag.vy - d.y / vs
 				clampView()

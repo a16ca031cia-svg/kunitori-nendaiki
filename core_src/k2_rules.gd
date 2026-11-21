@@ -481,6 +481,7 @@ func capture(tid: int, nid: int, _byArmy = null) -> void:
 		addWarScore(nid, old, WAR.scoreTerr + (WAR.scoreCapital if t.cap else 0))
 		G.dip.taken[nid][old] = G.dip.taken[nid][old] + 1
 	chron("%s 陥落 — %s が %s より奪取" % [t.name, nm, on], nid, "fall")
+	captured.emit(tid, nid, old)
 	invalidateTerr(tid)
 	flashTerr(tid)
 	if t.cap and old >= 0:
@@ -526,6 +527,7 @@ func checkNations() -> void:
 			if facOf(na.id) != null: leaveFaction(na.id, "quiet")
 			logMsg("%s は滅亡しました" % na.name, "war")
 			chron("%s 滅亡" % na.name, na.id, "end")
+			nation_fell.emit(na.id)
 			for v in G.nations:
 				if v.alive and v.lord == na.id: freeVassal(v.id, "主君の滅亡")
 	warSuccession()
@@ -553,6 +555,8 @@ func endGame(winner: int) -> void:
 	UI.auto = false
 	game_over.emit(winner)
 signal game_over(winner: int)
+signal captured(tid: int, nid: int, old: int)
+signal nation_fell(nid: int)
 
 # ---------- 戦闘計算 ----------
 func sideStats(list: Array, t: Dictionary, isDef: bool) -> Dictionary:
