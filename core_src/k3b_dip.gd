@@ -150,6 +150,7 @@ func declareWar(a: int, b: int, _byPlayer := false) -> void:
 			if not c.alive or c.id == a or c.id == b: continue
 			addFavor(c.id, a, CASUS.noFavor)
 			if nationsAdjacent(c.id, a): grantCB(c.id, a, "%s の不義の戦" % NAT(a).name, CASUS.unjustTurns)
+	G.declN = G.get("declN", 0) + 1
 	warInit(a, b, cpuWarGoal(a, b))
 	var msg := "%s が %s に宣戦布告（目標：%s）" % [NAT(a).name, NAT(b).name, goalLabel(a, b)]
 	logMsg(msg, "war")

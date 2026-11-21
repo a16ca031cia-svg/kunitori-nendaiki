@@ -45,6 +45,12 @@ var statSort = "pw"
 
 func _ready() -> void:
 	var args = OS.get_cmdline_user_args()
+	var bi = args.find("--balance")
+	if bi >= 0:
+		if args.has("--nogate"): S.HOI_GATE = false
+		await _balance(int(args[bi + 1]), int(args[bi + 2]))
+		get_tree().quit()
+		return
 	var si = args.find("--sim")
 	if si >= 0:
 		await _sim(args[si + 1] if args.size() > si + 1 else "small", int(args[si + 2]) if args.size() > si + 2 else 30)
@@ -732,6 +738,7 @@ func natPanel(nid: int) -> String:
 	s += "\n[font_size=11][color=#9b9484]地図の色 — [color=#f0cf55]選択中[/color]／[color=#c94b44]戦争[/color]／[color=#5f9c57]同盟[/color]／[color=#d8a03c]緊張[/color]／[color=#7fa8cf]青点線＝通行許可[/color][/color][/font_size]\n"
 	s += _warPanel(nid)
 	s += _desirePanel(nid)
+	s += _hoiPanel(nid)
 	var rels = []
 	for n in S.G.nations:
 		if n.id == nid or not n.alive: continue
@@ -826,6 +833,8 @@ func _onMeta(meta) -> void:
 					cid = t.id
 					break
 		if cid != null: map.focusOn(cid)
+	elif m == "act:focus":
+		if S.UI.selNat != null: openFocus(S.UI.selNat)
 	elif m == "act:natclear":
 		selectNation(null)
 
@@ -943,11 +952,18 @@ func _bodyText(bb: String) -> RichTextLabel:
 func confirmModal(title: String, text: String, cb: Callable) -> void:
 	modal(title, _bodyText(text), [_btn("やめる", closeModal), _btn("実行する", func(): closeModal(); cb.call(), true)], 440)
 func openHelp() -> void:
-	var rows = [["スペース", "1ターン進める"], ["A", "自動進行の開始／停止"], ["[　]", "速さを下げる／上げる"], ["R", "記録（年代記・統計）を開く"], ["F", "全体を表示"], ["C", "選んだ国の全体を表示"],
+	var rows = [["スペース", "1ターン進める"], ["A", "自動進行の開始／停止"], ["[　]", "速さを下げる／上げる"], ["R", "記録（年代記・統計）を開く"], ["F", "全体を表示"], ["C", "選んだ国の全体を表示"], ["G", "選んだ国の国家方針ツリー"],
 		["＋　－", "拡大／縮小（ホイール・二本指でも）"], ["矢印キー", "地図を動かす（ドラッグでも）"], ["Esc", "窓を閉じる・戦闘を飛ばす／国の選択を外す"], ["?", "この画面"]]
 	var s = "[color=#9b9484]すべての国をCPUが動かします。気になる国を選んで、その国の目線で興亡を見届けてください。[/color]\n\n[table=2]"
 	for r in rows: s += "[cell][b][color=#e6c95a]%s[/color][/b]　[/cell][cell]%s[/cell]" % [_esc(r[0]), r[1]]
 	s += "[/table]\n\n[color=#9b9484]地図の国をクリックするとその国が選ばれ、もう一度押すとその国の全体が映ります。マウスを載せると領地の詳しい情報が出ます。選んだ国に関わる戦い・外交だけが知らされます。[/color]"
+	s += "
+
+[b]国家のしくみ[/b]
+[font_size=12][color=#9b9484]・[color=#eae4d6]政体[/color]：君主制・合議制・軍政・惣国。支持の多い政体が安定度の低い時に政変で入れ替わる
+・[color=#eae4d6]安定度[/color]：高いほど生産と治安が上がる。[color=#eae4d6]戦争支持[/color]：政体ごとの値に届かないと宣戦しない（合議制は大義も要る）
+・[color=#eae4d6]国家方針[/color]：共通の枝（産業・軍事・政治・外交）と県ごとの固有の枝。達成すると国民精神・工場などが手に入る（G キーでツリー）
+・[color=#eae4d6]工場[/color]：軍需工場は軍需品を作り、兵の生産に使う（足りないと兵の生産が落ちる）。民需工場はゴールドを生み、建設費を下げる[/color][/font_size]"
 	s += "
 
 [font_size=11][color=#9b9484]音：戦時の曲「Taiko drums (seamless loop)」jobro（CC-BY 3.0・OpenGameArt）／平時の曲「Asianoriental1」Tozan、効果音 Kenney・StarNinjas ほか（CC0）[/color][/font_size]"
@@ -1246,6 +1262,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 		KEY_R: openRecord()
 		KEY_F: map.fitView()
 		KEY_C: if S.UI.selNat != null: map.frameNation(S.UI.selNat)
+		KEY_G: if S.UI.selNat != null: openFocus(S.UI.selNat)
 		KEY_EQUAL, KEY_PLUS, KEY_KP_ADD, KEY_SEMICOLON: map.zoomAt(1.25, map.size.x / 2, map.size.y / 2)
 		KEY_MINUS, KEY_KP_SUBTRACT: map.zoomAt(0.8, map.size.x / 2, map.size.y / 2)
 		KEY_BRACKETLEFT:
@@ -1422,3 +1439,139 @@ func _updateBgm(force := false) -> void:
 		nxt.play()
 		tw.tween_property(nxt, "volume_db", -8.0 if want == "peace" else -13.0, 1.5)
 	tw.chain().tween_callback(func(): if cur.volume_db <= -79.0: cur.stop())
+
+## 釣り合いの確認（godot --headless -- --balance 回数 ターン数）：戦争の多さと北海道（0番）の強さ
+func _balance(runs: int, turns: int) -> void:
+	S.CFG.showDip = false
+	S.CFG.showCpuBattle = false
+	S.setSpeed(3, false)
+	var tot = {"decl": 0.0, "wars": 0.0, "dead": 0.0, "hkRank": 0.0, "hkShare": 0.0, "topShare": 0.0}
+	for r in runs:
+		S.newGame("japan")
+		var warSum = 0
+		var inwSum = 0
+		for k in turns:
+			await S.endTurn()
+			var pr = 0
+			var inw = 0
+			for x in S.G.nations:
+				if not x.alive: continue
+				var w0 = false
+				for y in S.G.nations:
+					if y.alive and y.id > x.id and S.atWar(x.id, y.id): pr += 1
+					if y.alive and S.atWar(x.id, y.id): w0 = true
+				if w0: inw += 1
+			warSum += pr
+			inwSum += inw
+			if S.G.over != null: break
+		var cnt = {}
+		for t in S.G.terrs:
+			if t.owner >= 0: cnt[t.owner] = cnt.get(t.owner, 0) + 1
+		var ids: Array = cnt.keys()
+		ids.sort_custom(func(a, b): return cnt[a] > cnt[b])
+		var decl = S.G.get("declN", 0)
+		var dead = 0
+		for n in S.G.nations:
+			if not n.alive: dead += 1
+		var hk: int = ids.find(0) + 1 if ids.has(0) else 99
+		var pw = []
+		for n in S.G.nations:
+			if n.alive: pw.append([n.id, S.nationPower(n.id)])
+		pw.sort_custom(func(a, b): return a[1] > b[1])
+		var hkp = 99
+		for i in pw.size():
+			if pw[i][0] == 0: hkp = i + 1
+		var med = pw[pw.size() / 2][1]
+		print("  国力：北海道 %d位（中央値の%.2f倍）1位 %s（%.2f倍）" % [hkp, S.nationPower(0) / max(1.0, med), S.NAT(pw[0][0]).name, pw[0][1] / max(1.0, med)])
+		var line = "run%d T%d 宣戦=%d 交戦組=%.1f 戦争中の国=%.1f 滅亡=%d 北海道=%d位(%d領地) 上位=" % [r, S.G.turn, decl, warSum / float(turns), inwSum / float(turns), dead, hk, cnt.get(0, 0)]
+		for i in min(5, ids.size()): line += "%s%d " % [S.NAT(ids[i]).name, cnt[ids[i]]]
+		print(line)
+		tot.decl += decl; tot.wars += warSum / float(turns); tot.dead += dead; tot.hkRank += hk
+		tot.hkShare += cnt.get(0, 0) / float(S.G.terrs.size()); tot.topShare += cnt[ids[0]] / float(S.G.terrs.size())
+	print("AVG 宣戦=%.1f 平均戦争=%.1f 滅亡=%.1f 北海道の順位=%.1f 北海道の割合=%.2f 1位の割合=%.2f" % [tot.decl / runs, tot.wars / runs, tot.dead / runs, tot.hkRank / runs, tot.hkShare / runs, tot.topShare / runs])
+
+# ---------- 政体・国家方針（HOI4風） ----------
+func _meter(v: float, col: String) -> String:
+	var n = int(round(clamp(v, 0, 100) / 10.0))
+	return _bar(col, max(0, n)) + "[bgcolor=#252b38][font_size=7]%s[/font_size][/bgcolor]" % "　".repeat(10 - n)
+func _hoiPanel(nid: int) -> String:
+	var na = S.NAT(nid)
+	if not na.has("ideo"): return ""
+	var I = S.IDEO[na.ideo]
+	var s = "\n" + _lbl("国家") + "\n"
+	s += "[b][color=%s]%s[/color][/b]　[font_size=11][color=#9b9484]%s[/color][/font_size]\n" % [I.c, I.n, I.d]
+	var keys = S.IDEO_KEYS.duplicate()
+	keys.sort_custom(func(a, b): return na.ipop[a] > na.ipop[b])
+	s += "[font_size=11]"
+	for k in keys:
+		s += "%s %s [color=#9b9484]%d%%[/color]　" % [_dot(S.IDEO[k].c), S.IDEO[k].n, int(round(na.ipop[k]))]
+	s += "[/font_size]\n"
+	var rows = []
+	var stc = "6d9c63" if na.stab >= 60 else ("d29b3c" if na.stab >= 40 else "c0504a")
+	rows.append(["安定度", "%s [color=#%s]%d%%[/color] [font_size=11][color=#9b9484]生産 ×%.2f[/color][/font_size]" % [_meter(na.stab, "#" + stc), stc, int(round(na.stab)), S.stabMul(na)]])
+	var ok = na.ws >= I.wsNeed
+	rows.append(["戦争支持", "%s [color=#%s]%d%%[/color] [font_size=11][color=#9b9484]宣戦に %d%% 要る%s[/color][/font_size]" % [_meter(na.ws, "#c0504a"), "e6c95a" if ok else "9b9484", int(round(na.ws)), I.wsNeed, "・大義も要る" if na.ideo == "gougi" else ""]])
+	rows.append(["政治力", "%d" % int(na.pp)])
+	var fc = S.factoryCount(nid)
+	rows.append(["工場", "軍需 %d・民需 %d　[font_size=11][color=#9b9484]建設費 ×%.2f[/color][/font_size]" % [fc[0], fc[1], S.costMul(nid)]])
+	var em: float = na.get("eqMul", 1.0)
+	rows.append(["軍需品", "%s　[font_size=11][color=#9b9484]+%s／ターン・使う %s[/color]%s[/font_size]" % [S.fmt(na.eq), S.fmt(na.get("eqIn", 0)), S.fmt(na.get("eqNeed", 0)), (" [color=#c0504a]不足：兵の生産 ×%.2f[/color]" % em) if em < 0.99 else ""]])
+	var F = na.focus
+	var cur = S.focusById(na, F.cur) if F.cur != null else null
+	var ft = "[color=#9b9484]なし[/color]"
+	if cur != null: ft = "[color=#e6c95a]%s[/color] [font_size=11][color=#9b9484]%d / %dターン[/color][/font_size]" % [_esc(cur.n), F.prog, cur.t]
+	rows.append(["国家方針", ft + "　" + _link("act:focus", "［ツリー］") + " [font_size=11][color=#9b9484]達成 %d[/color][/font_size]" % F.done.size()])
+	s += _kv(rows)
+	if na.spirits.size():
+		s += _lbl("国民精神") + "\n"
+		for sp in na.spirits:
+			var col = "c0504a" if _spiritBad(sp.m) else "b9a2e6"
+			s += "[color=#%s]◆[/color] [b]%s[/b] [font_size=11][color=#9b9484]%s[/color][/font_size]\n" % [col, _esc(sp.n), _esc(sp.d)]
+	return s
+func _spiritBad(m: Dictionary) -> bool:
+	var v = 0.0
+	for k in m:
+		if k == "build": v -= m[k]
+		elif k == "stab" or k == "ws" or k == "pp" or k == "sec": v += m[k] / 50.0
+		else: v += m[k]
+	return v < 0
+func openFocus(nid: int) -> void:
+	var na = S.NAT(nid)
+	var vb = VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 8)
+	var sc = ScrollContainer.new()
+	sc.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	var ft = preload("res://scripts/ui/focus_tree.gd").new()
+	ft.setup(nid, fontR, fontB)
+	sc.add_child(ft)
+	sc.custom_minimum_size = Vector2(0, ft.custom_minimum_size.y + 14)
+	vb.add_child(sc)
+	var info = _rtl()
+	info.custom_minimum_size = Vector2(0, 64)
+	var show = func(id):
+		var f = S.focusById(na, id)
+		if f == null: return
+		var st = "達成" if na.focus.done.has(id) else ("取り組み中 %d / %dターン" % [na.focus.prog, f.t] if na.focus.cur == id else "%dターン" % f.t)
+		var req = []
+		for r in f.req:
+			var rf = S.focusById(na, r)
+			if rf != null: req.append(rf.n)
+		var ex = []
+		for x in f.get("ex", []):
+			var xf = S.focusById(na, x)
+			if xf != null: ex.append(xf.n)
+		var t = "[b][color=#e6c95a]%s[/color][/b]　[font_size=11][color=#9b9484]%s[/color][/font_size]\n%s" % [_esc(f.n), st, _esc(S.focusDesc(f))]
+		if req.size(): t += "\n[font_size=11][color=#9b9484]前提：%s%s[/color][/font_size]" % [_esc("・".join(req)), "（どれか）" if req.size() > 1 else ""]
+		if ex.size(): t += "\n[font_size=11][color=#c0504a]同時に取れない：%s[/color][/font_size]" % _esc("・".join(ex))
+		info.text = t
+	ft.picked.connect(show)
+	if na.focus.cur != null: show.call(na.focus.cur)
+	else: info.text = "[color=#9b9484]方針を押すと効果が出ます。方針は CPU が国の気質・情勢・政体を見て選び、決まったターン数で達成します。[/color]"
+	vb.add_child(info)
+	var head = "[font_size=12][color=#9b9484]%s ／ %s ／ 達成 %d[/color][/font_size]" % [S.IDEO[na.ideo].n, "取り組み中：" + S.focusById(na, na.focus.cur).n if na.focus.cur != null else "取り組み中の方針なし", na.focus.done.size()]
+	var hl = _rtl()
+	hl.text = head
+	vb.add_child(hl)
+	vb.move_child(hl, 0)
+	modal("%s の国家方針" % na.name, vb, [_btn("閉じる", closeModal, true)], min(size.x - 24, ft.custom_minimum_size.x + 40))
+	_modalKey = "focus:%d" % nid

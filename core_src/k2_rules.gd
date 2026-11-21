@@ -51,11 +51,14 @@ func armyStats(a: Dictionary) -> Dictionary:
 		atk *= m; def *= m
 	if na.get("revoltBuff", 0) > 0:
 		atk *= 1 + DIP.revoltAtk; def *= 1 + DIP.revoltDef; chg += DIP.revoltChg
+	atk *= 1 + nmod(a.owner, "atk") + (0.05 if na.get("eqMul", 1.0) >= 0.99 and na.get("eq", 0) > 6000 else 0.0)
+	def *= 1 + nmod(a.owner, "def")
 	return {"tot": tot, "atk": atk, "def": def, "chg": min(0.5, chg)}
 func fortMul(t: Dictionary) -> float:
 	var m: float = 1 + CFG.fortBase + FORT_DEV_DEF[t.dev] if t.type == "fort" else 1.0
 	if t.get("trait") == "mount": m += 0.15
 	m += terrOf(t).def
+	if t.type == "fort": m += nmod(t.owner, "fort")
 	return max(0.5, m)
 
 ## 経路探索の下ごしらえ：隣の番号・入るのにかかるターン・持ち主を詰めた配列（地図・インフラ・持ち主が変わったら作り直す）

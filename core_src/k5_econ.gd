@@ -8,7 +8,7 @@ func bldCount(t: Dictionary, k: String) -> int:
 	return n
 func popCap(t: Dictionary) -> int:
 	var base: float = (CFG.popCity if t.type == "city" else CFG.popFort) * t.dev + bldCount(t, "house") * CFG.houseCap
-	return int(round(base * (1.3 if t.get("trait") == "dense" else 1.0) * terrOf(t).pop))
+	return int(round(base * (1.3 if t.get("trait") == "dense" else 1.0) * terrOf(t).pop * max(0.3, 1.0 + nmod(t.owner, "pop"))))
 func popRatio(t: Dictionary) -> float: return clamp_f(t.pop / max(1.0, popCap(t)), 0, 1.2)
 func secMul(t: Dictionary) -> float:
 	if t.sec >= 90: return 1.05
@@ -100,7 +100,7 @@ func addFatigue(nid: int, v: float) -> void:
 # ---------- 領地の毎ターン更新 ----------
 func updateTerr(t: Dictionary, na: Dictionary, war: bool) -> void:
 	var starve := isStarving(na)
-	var d: float = CFG.secRecover + bldCount(t, "gov") * CFG.secGov + polAdd(na, "sec")
+	var d: float = CFG.secRecover + bldCount(t, "gov") * CFG.secGov + polAdd(na, "sec") + nmod(na.id, "sec") + (na.get("stab", 50.0) - 50.0) / 25.0
 	if t.chaos > 0: d += CFG.secChaos
 	if war: d += CFG.secWar
 	if starve: d += CFG.secStarve
@@ -108,7 +108,7 @@ func updateTerr(t: Dictionary, na: Dictionary, war: bool) -> void:
 	var cap := popCap(t)
 	if starve: t.pop = int(round(t.pop * 0.97))
 	elif t.chaos <= 0:
-		var rate := clamp_f(CFG.popGrow * (1 + bldCount(t, "house") * 0.5) * (t.sec / 70.0) * polMul(na, "grow"), 0, 0.4)
+		var rate := clamp_f(CFG.popGrow * (1 + bldCount(t, "house") * 0.5) * (t.sec / 70.0) * polMul(na, "grow") * (1.0 + nmod(na.id, "grow")), 0, 0.4)
 		t.pop = int(round(t.pop + (cap - t.pop) * rate))
 	if t.pop > cap: t.pop = int(round(t.pop - (t.pop - cap) * 0.25))
 	t.pop = max(200, t.pop)

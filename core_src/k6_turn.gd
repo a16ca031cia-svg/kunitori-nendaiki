@@ -104,6 +104,12 @@ func production() -> void:
 		var pGold := polMul(na, "gold")
 		var pFood := polMul(na, "food")
 		var pTroop := polMul(na, "troop")
+		var sm := stabMul(na) if na.has("stab") else 1.0
+		pGold *= (1.0 + nmod(na.id, "gold")) * sm
+		pFood *= max(0.2, 1.0 + nmod(na.id, "food"))
+		pTroop *= max(0.2, 1.0 + nmod(na.id, "troop")) * sm * na.get("eqMul", 1.0)
+		var mfN := 0
+		var cfN := 0
 		var gold := 0.0
 		var food := 0.0
 		var levy := 0.0
@@ -117,6 +123,13 @@ func production() -> void:
 			var room: float = levyRoom(t)
 			for b in t.bld:
 				if not b: continue
+				if b == "mf":
+					mfN += 1
+					continue
+				if b == "cf":
+					cfN += 1
+					gold += CF_GOLD * gm * (1.0 + nmod(na.id, "cf"))
+					continue
 				if b == "market":
 					gold += BLD_OUT.market.gold * gm * (1.3 if t.get("trait") == "trade" else 1.0)
 					continue
@@ -134,6 +147,18 @@ func production() -> void:
 					var used: float = n * CFG.levyPop
 					room -= used; room2 -= n; levy += used
 					t.pop = max(0, int(round(t.pop - used)))
+		if na.has("eq"):
+			var sec0 := 1.0
+			if own.size(): sec0 = clamp_f(0.6 + na.get("stab", 50.0) / 125.0, 0.6, 1.4)
+			na.eqIn = int(round(mfN * EQ_PER_MF * (1.0 + nmod(na.id, "mf")) * sec0))
+			na.eq += na.eqIn
+			var troops := 0.0
+			for k in TK: troops += add[k]
+			var need: float = troops * EQ_COST / max(0.35, na.get("eqMul", 1.0))
+			na.eqNeed = int(round(troops * EQ_COST))
+			na.eq = max(0, na.eq - na.eqNeed)
+			na.eqMul = clamp_f(0.35 + 0.65 * (na.eq + na.eqIn) / max(1.0, need), 0.35, 1.0) if need > 0 else 1.0
+			na.eq = min(na.eq, 60000)
 		if na.get("badHarv", 0) > 0:
 			gold *= 0.6; food *= 0.6; na.badHarv -= 1
 		na.goldIn = int(round(gold))
@@ -479,6 +504,7 @@ func cpuTurn(nid: int) -> void:
 		_pt[1] = msg
 		var shown = msg.get_slice(":", 0)
 		setPhase(nid, P.n + ((" ／ " + shown) if shown != "" else ""))
+	hoiTurn(nid)
 	cpuPolicy(nid, P)
 	phase.call("外交")
 	cpuDiplomacy(nid)
@@ -499,6 +525,8 @@ func cpuTurn(nid: int) -> void:
 		if _bldN(t) < t.dev: cand.append(t)
 	cand.sort_custom(func(a, b): return a.dev > b.dev)
 	var bal := foodGain(nid) - foodNeed(nid)
+	var fcN := factoryCount(nid)
+	var cm := costMul(nid)
 	var lowSec := 0
 	for x in own:
 		if x.sec < 45: lowSec += 1
@@ -519,18 +547,24 @@ func cpuTurn(nid: int) -> void:
 					k = kk
 					break
 			if t.type == "city" and randf() < P.mkt * 0.6: k = "market"
+		if k != "farm" and k != "gov":
+			if na.has("eq") and (na.get("eqMul", 1.0) < 0.9 or (war and na.eq < 4000)) and fcN[0] < own.size() * 0.4 and randf() < 0.6: k = "mf"
+			elif fcN[1] < max(1.0, own.size() * 0.12) and randf() < 0.25 + P.mkt * 0.3: k = "cf"
 		if TK.has(k) and levyRoom(t) < 900: k = "house" if t.type == "city" else "farm"
 		if TK.has(k) and glut: k = "market" if t.type == "city" else "farm"
 		if BLD[k].get("cityOnly", false) and t.type == "fort": k = "farm"
-		if na.gold < BLD[k].cost: continue
+		var cost: int = int(round(BLD[k].cost * cm))
+		if na.gold < cost: continue
 		var slot := -1
 		for i in t.dev:
 			if i >= t.bld.size() or not t.bld[i]:
 				slot = i
 				break
 		if slot < 0: continue
-		na.gold -= BLD[k].cost
+		na.gold -= cost
 		_setBld(t, slot, k)
+		if k == "mf": fcN[0] += 1
+		if k == "cf": fcN[1] += 1
 		if k == "market": mk += 1
 		if k == "farm": bal += CFG.farmOut * terrOf(t).food
 	if glut and na.gold >= BLD.market.cost * 2:

@@ -303,6 +303,7 @@ func cpuDiplomacy(nid: int) -> void:
 	if na.get("fatigue", 0) >= DIP.fatiguePeace: return
 	var danger := cpuDanger(nid)
 	if danger >= 1.0: return
+	if not hoiWarOK(nid): return
 	if na.food <= 0: return
 	if smartAI(nid):
 		var ownN := 0
@@ -333,6 +334,7 @@ func cpuDiplomacy(nid: int) -> void:
 		var th: float = defCoalition(nid, o.id) if sm else max(1.0, nationPower(o.id))
 		var mineC: float = atkCoalition(nid, o.id) if sm else mine
 		var cb := hasCB(nid, o.id)
+		if not cb and na.get("ideo") == "gougi": continue
 		if not cb and not (mineC >= th * 1.8 and randf() < P.noCB): continue
 		if sm and mineC < th * 0.95: continue
 		var sc: float = (mineC / th - 1) * 100 + (60 - favorOf(nid, o.id)) + ambition \
@@ -385,6 +387,7 @@ func cpuPeaceTies(nid: int, P: Dictionary) -> void:
 func cpuFabricate(nid: int, P: Dictionary, mine: float) -> void:
 	if not (P.fab > 0) or randf() > P.fab * crowdMul(): return
 	var na := NAT(nid)
+	if na.has("ideo") and na.ws < IDEO[na.ideo].wsNeed - 10: return
 	if na.gold < CASUS.fabGold + 4000: return
 	for o in G.nations:
 		if o.alive and fabLeft(nid, o.id) > 0: return

@@ -5,6 +5,7 @@
 **遊ぶ:** https://a16ca031cia-svg.github.io/kunitori-nendaiki/
 
 - 地図は「日本（47都道府県）」と「架空の大陸（小・中・大）」
+- HOI4 を参考にした国家のしくみ：政体・安定度・戦争支持・国民精神・国家方針ツリー（県ごとの固有の枝つき）・軍需／民需工場
 - 元は1ファイルの HTML 版（`reference/kunitori_nendaiki.html`）。Godot 4.7.2（GDScript）で作り直し、Web 書き出しで公開している
 
 ## 構成

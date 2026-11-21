@@ -12,6 +12,7 @@ func newGame(size: String) -> void:
 		t.homeCap = t.cap
 	G.factions = {}
 	G.ncol = NCOL.duplicate()
+	hoiInit(G)
 	beginGame()
 func _resetCaches() -> void:
 	NBR = null; NBR_G = null; SEGN_DONE = null; COAST_G = null; HOP_G = null; ADJ_G = null
@@ -143,6 +144,7 @@ func loadSlot(i: int) -> bool:
 			g.terrs[k].sn = m.terrs[k].sn
 		g.edges = m.edges
 		g.nb = m.nb
+	if g.nations.size() and not g.nations[0].has("ideo"): hoiInit(g)
 	resetColors(g.get("ncol", null))
 	stopAuto()
 	G = g

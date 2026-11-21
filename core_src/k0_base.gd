@@ -38,9 +38,11 @@ const BLD := {
 	"spe": {"n": "槍兵舎", "cost": 2000, "eff": "槍兵 +300"},
 	"arc": {"n": "弓兵舎", "cost": 2000, "eff": "弓兵 +250"},
 	"cav": {"n": "厩舎", "cost": 3000, "eff": "騎兵 +150"},
+	"mf": {"n": "軍需工場", "cost": 2500, "eff": "軍需品 +300（兵の生産に要る）"},
+	"cf": {"n": "民需工場", "cost": 2500, "eff": "ゴールド +300・建設費 -2%"},
 }
 const BLD_OUT := {"market": {"gold": 500}, "farm": {"food": 500}, "inf": {"inf": 400}, "spe": {"spe": 300}, "arc": {"arc": 250}, "cav": {"cav": 150}}
-const BLD_KEYS := ["farm", "market", "gov", "house", "inf", "spe", "arc", "cav"]
+const BLD_KEYS := ["farm", "market", "gov", "house", "inf", "spe", "arc", "cav", "mf", "cf"]
 const TRAIT := {
 	"fertile": {"n": "肥沃な土地", "d": "農場の食料 +30%", "c": "#6d9c63"},
 	"trade": {"n": "商業都市", "d": "市場の収入 +30%", "c": "#c9a227", "city": true},
