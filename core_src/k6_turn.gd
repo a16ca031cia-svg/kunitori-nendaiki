@@ -305,11 +305,11 @@ func cpuEventChoice(na: Dictionary, ev: Dictionary) -> int:
 	var rich: bool = na.gold > 20000
 	var poor: bool = na.gold < 6000
 	if not _evOk(na, ev, 0): return 1
-	if ev.k == "merc": return 0 if rich and (na.persona == "aggr" or cpuDanger(na.id) >= 0.8) else 1
+	if ev.k == "merc": return 0 if rich and (na.persona == "aggr" or na.persona == "fascism" or cpuDanger(na.id) >= 0.8) else 1
 	if ev.k == "gen": return 0 if na.gens.size() < 6 and rich else 1
 	if ev.k == "good": return 0 if na.food < foodNeed(na.id) * 6 else 1
 	if poor: return 1
-	return 0 if na.persona == "econ" or na.persona == "def" or rich else 1
+	return 0 if na.persona == "econ" or na.persona == "def" or na.persona == "neutral" or na.persona == "democracy" or rich else 1
 
 # ---------- 年代記の節目 ----------
 const TERR_MILE := [5, 10, 15, 20, 30, 40, 50, 60, 70]
@@ -460,10 +460,10 @@ func cpuPolicy(nid: int, P: Dictionary) -> void:
 	elif danger >= 1.0: want = "total"
 	elif war: want = "total" if P.army > 0 else "mil"
 	elif hasDesire(nid, "guard"): want = "mil"
-	elif hasDesire(nid, "prosper"): want = "trade" if na.persona == "econ" else "civil"
-	elif na.persona == "econ": want = "trade"
-	elif na.persona == "def": want = "civil"
-	elif na.persona == "aggr": want = "mil"
+	elif hasDesire(nid, "prosper"): want = "trade" if na.persona == "econ" or na.persona == "neutral" else "civil"
+	elif na.persona == "econ" or na.persona == "neutral": want = "trade"
+	elif na.persona == "def" or na.persona == "democracy": want = "civil"
+	elif na.persona == "aggr" or na.persona == "fascism": want = "mil"
 	else: want = "trade" if randf() < 0.5 else "civil"
 	if want != na.get("policy", "none"): setPolicy(nid, want)
 
@@ -495,7 +495,7 @@ func cpuTurn(nid: int) -> void:
 	if not na.alive: return
 	var own := _ownOf(nid)
 	if own.is_empty(): return
-	var P: Dictionary = PERSONA.get(na.persona, PERSONA.bal)
+	var P: Dictionary = PERSONA.get(na.persona, PERSONA.neutral)
 	var _pt := [Time.get_ticks_usec(), "方針"]
 	var phase := func(msg: String):
 		var now := Time.get_ticks_usec()

@@ -72,7 +72,7 @@ const TRAIT_RATE := 0.45
 const DEV_COST := [0, 2000, 5000, 10000, 20000, 0]
 const ROAD_COST := [0, 5000, 12000, 0]
 const INFRA_COST := [0, 0, 12000, 30000]
-const INFRA_RATE := {"econ": 0.22, "bal": 0.14, "def": 0.12, "aggr": 0.08}
+const INFRA_RATE := {"econ": 0.22, "bal": 0.14, "def": 0.12, "aggr": 0.08, "neutral": 0.22, "democracy": 0.18, "communism": 0.14, "fascism": 0.08}
 const INFRA_N := ["", "乏しい", "整った", "主要街道"]
 const FORT_DEV_DEF := [0, 0, 0.05, 0.10, 0.15, 0.20]
 const GEN_ABIL := [
@@ -94,6 +94,7 @@ func resetColors(list = null) -> void:
 const SIZES := {"small": {"n": 250, "nat": 8}, "mid": {"n": 400, "nat": 10}, "large": {"n": 600, "nat": 12}}
 
 const PERSONA := {
+	"fascism": IDEO_PERSONA.fascism, "communism": IDEO_PERSONA.communism, "democracy": IDEO_PERSONA.democracy, "neutral": IDEO_PERSONA.neutral,
 	"aggr": {"n": "攻勢型", "d": "軍団と侵攻を優先", "army": 1, "goal": 0.85, "atkTh": 1.05, "guard": 0.34, "mkt": 0.22, "devG": 9000, "roadG": 21000, "mix": {"inf": 0.42, "spe": 0.13, "arc": 0.20, "cav": 0.25}, "settle": 0.8,
 		"tradeW": -10, "pactW": -25, "fab": 0.45, "noCB": 0.12, "peaceW": -0.03, "dd": "口実を作ってでも弱い隣国を狙う。条約は好まない"},
 	"def": {"n": "防衛型", "d": "砦と国境を重視", "army": 0, "goal": 1.10, "atkTh": 1.50, "guard": 0.62, "mkt": 0.40, "devG": 7000, "roadG": 15000, "mix": {"inf": 0.40, "spe": 0.32, "arc": 0.20, "cav": 0.08}, "settle": 1.0,
@@ -501,6 +502,9 @@ func genMap(size: String) -> Dictionary:
 			var B: Vector2 = p[(e + 1) % p.size()]
 			var j: int = edgeNb0[i][e]
 			if j < 0:
+				segs.append([A, B])
+				continue
+			if not borders.has(bkey(i, j)):
 				segs.append([A, B])
 				continue
 			var line: Array = borders[bkey(i, j)]
@@ -1476,8 +1480,8 @@ var DIP = {
 	"warFavor": -100, "warOthers": -26, "warAllyOthers": -8, "justMul": 0.35, "captureFavor": -6,
 	"driftPeace": 0.5, "driftAlly": 1.2, "driftWar": -1.5, "driftCap": 62,
 	"driftCommon": 1.6, "driftCommonCap": 95,
-	"cpuWarChance": {"aggr": 0.28, "bal": 0.14, "def": 0.07, "econ": 0.05},
-	"cpuWarNeed": {"aggr": 40, "bal": 58, "def": 75, "econ": 85},
+	"cpuWarChance": {"aggr": 0.28, "bal": 0.14, "def": 0.07, "econ": 0.05, "fascism": 0.32, "communism": 0.14, "neutral": 0.06, "democracy": 0.03},
+	"cpuWarNeed": {"aggr": 40, "bal": 58, "def": 75, "econ": 85, "fascism": 35, "communism": 58, "neutral": 80, "democracy": 95},
 	"cpuAmbition": 0.8, "cpuAmbitionMax": 30, "cpuPeaceTurns": 12,
 	"allyTurns": 20, "allyRenewMin": 70, "peaceCool": 5, "reach": 2,
 	"vassalRatio": 1.7, "vassalWarRatio": 1.3, "vassalFavor": 35, "tribute": 0.15,
@@ -1610,7 +1614,7 @@ func tradePartners(a: int) -> Array:
 	for o in G.nations:
 		if o.alive and isTrade(a, o.id): r.append(o.id)
 	return r
-func tradeEase(nid: int) -> float: return PERSONA.get(NAT(nid).persona, PERSONA.bal).tradeW
+func tradeEase(nid: int) -> float: return PERSONA.get(NAT(nid).persona, PERSONA.neutral).tradeW
 func tradeReason(a: int, b: int) -> String:
 	if isTrade(a, b): return "すでに通商しています"
 	var st = relState(a, b)
@@ -1646,7 +1650,7 @@ func tradeIncome(nid: int) -> int:
 
 # ---------- 不可侵条約 ----------
 func pactLeft(a: int, b: int) -> int: return 0 if a == b else max(0, G.dip.pact[a][b] - G.turn)
-func pactEase(nid: int) -> float: return PERSONA.get(NAT(nid).persona, PERSONA.bal).pactW
+func pactEase(nid: int) -> float: return PERSONA.get(NAT(nid).persona, PERSONA.neutral).pactW
 func pactNeed(b: int) -> float: return PACT.min - pactEase(b)
 func makePact(a: int, b: int) -> void:
 	G.dip.pact[a][b] = G.turn + PACT.turns; G.dip.pact[b][a] = G.turn + PACT.turns
@@ -1690,7 +1694,7 @@ func peaceTiesTurn() -> void:
 				if favorOf(a, b) < PACT.favorCap: addFavor(a, b, PACT.favor)
 				if favorOf(b, a) < PACT.favorCap: addFavor(b, a, PACT.favor)
 				if G.turn >= p - 1:
-					if favorOf(a, b) >= PACT.renewMin and favorOf(b, a) >= PACT.renewMin and relState(a, b) == "peace":
+					if favorOf(a, b) >= PACT.renewMin and favorOf(b, a) >= PACT.renewMin and relState(a, b) == "peace" and pactOK(a, b):
 						G.dip.pact[a][b] = G.turn + 1 + PACT.turns; G.dip.pact[b][a] = G.turn + 1 + PACT.turns
 						chron("%s と %s が不可侵条約を更新" % [NAT(a).name, NAT(b).name], a, "dip")
 					else:
@@ -1910,7 +1914,7 @@ func natVP(n: int) -> float:
 	return s
 func surrenderLimit(n: int) -> float:
 	var na = NAT(n)
-	var base: float = {"def": 0.78, "aggr": 0.7, "bal": 0.66, "econ": 0.58}.get(na.persona, 0.66)
+	var base: float = {"def": 0.78, "aggr": 0.7, "bal": 0.66, "econ": 0.58, "democracy": 0.78, "fascism": 0.7, "communism": 0.66, "neutral": 0.6}.get(na.persona, 0.66)
 	return clamp_f(base - na.get("fatigue", 0) / 250.0, 0.35, 0.85)
 func surrenderProg(W: Dictionary, n: int) -> float:
 	var base: float = W.vp0.get(n, 0)
@@ -2103,6 +2107,7 @@ func declareWar(a: int, b: int, _byPlayer := false) -> void:
 	dipReport("war", a, b, true, note)
 	joinWarByPact(a, b)
 	factionCallToArms(a, b)
+	hoiGuarantee(a, b)
 	invalidateSupply()
 func makePeace(a: int, b: int) -> void:
 	if not atWar(a, b): return
@@ -2245,7 +2250,7 @@ func dipTurn() -> void:
 		for b in range(a + 1, n):
 			if not isAlly(a, b) or isVassal(a, b) or isVassal(b, a): continue
 			if allyUntil(a, b) and G.turn >= allyUntil(a, b):
-				var keep = favorOf(a, b) >= DIP.allyRenewMin and favorOf(b, a) >= DIP.allyRenewMin and natNear(a, b)
+				var keep = favorOf(a, b) >= DIP.allyRenewMin and favorOf(b, a) >= DIP.allyRenewMin and natNear(a, b) and ideoCompat(a, b)
 				if keep: renewAlly(a, b)
 				else: expireAlly(a, b)
 	vassalTurn()
@@ -2358,6 +2363,7 @@ func canAskVassal(a: int, b: int) -> bool:
 	var need: float = DIP.vassalWarRatio if atWar(a, b) else DIP.vassalRatio
 	return pa / pb >= need
 func vassalAccept(a: int, b: int) -> bool:
+	if isMajor(NAT(b)) and not atWar(a, b): return false
 	var ratio = nationPower(a) / max(1.0, nationPower(b))
 	var war = atWar(a, b)
 	var fav = favorOf(b, a)
@@ -2750,7 +2756,7 @@ func desireCands(nid: int) -> Array:
 	var lord = lordOf(nid)
 	if lord != null:
 		var pw = mine / max(1.0, nationPower(lord))
-		c.append({"k": "indep", "o": lord, "w": 30 + na.get("unrest", 0) * 0.4 + clamp_f(pw, 0, 1.5) * 25 + (10 if P == "aggr" else 0)})
+		c.append({"k": "indep", "o": lord, "w": 30 + na.get("unrest", 0) * 0.4 + clamp_f(pw, 0, 1.5) * 25 + (10 if P == "aggr" or P == "fascism" else 0)})
 	for v in vassalsOf(nid):
 		for o in G.nations:
 			if not o.alive or o.id == nid or o.id == v or lordOf(o.id) == nid: continue
@@ -2893,13 +2899,14 @@ func avgPower() -> float:
 func canMakeFaction(n: int) -> bool:
 	var na = NAT(n)
 	return na.alive and facOf(n) == null and lordOf(n) == null and nationPower(n) >= avgPower() * FAC.ratio
-func makeFaction(n: int) -> void:
+func makeFaction(n: int, name0 := "") -> void:
 	if not G.has("factions"): G.factions = {}
 	G.facSeq = G.get("facSeq", 0) + 1
 	var id: int = G.facSeq
 	var nm: String = NAT(n).name
 	if nm.ends_with("都") or nm.ends_with("道") or nm.ends_with("府") or nm.ends_with("県"): nm = nm.substr(0, nm.length() - 1)
 	nm += "陣営"
+	if name0 != "": nm = name0
 	G.factions[id] = {"id": id, "name": nm, "leader": n, "members": [n], "t0": G.turn}
 	NAT(n).faction = id
 	var msg = "%s が「%s」を結成する" % [NAT(n).name, nm]
@@ -3004,7 +3011,7 @@ func cpuFaction(nid: int) -> void:
 			var top = topThreat()
 			var vsTop: bool = top != null and not F.members.has(top.id) and natHops(o.id, top.id) <= 2
 			var sc = (favorOf(o.id, nid) - 50) * 0.8 + cpuDanger(o.id) * 35 + (20 if common else 0) + (15 if vsTop else 0) \
-				- (10 if o.persona == "aggr" else 0) - (25 if nationPower(o.id) > nationPower(nid) * 0.8 else 0) + 10
+				+ (25 if o.get("ideo") == na.get("ideo") else -20) - (25 if nationPower(o.id) > nationPower(nid) * 0.8 else 0) + 10
 			for d in desiresOf(o.id):
 				if DESIRE[d.k].war and F.members.has(desireNat(d)):
 					sc -= 40
@@ -3017,6 +3024,7 @@ func cpuFaction(nid: int) -> void:
 				addFavor(nid, o.id, -2)
 	if F != null and F.leader != nid and G.factions.has(F.id):
 		var wantOut = favorOf(nid, F.leader) < 25
+		if NAT(F.leader).get("ideo") != na.get("ideo") and randf() < 0.3: wantOut = true
 		if not wantOut:
 			for d in desiresOf(nid):
 				if DESIRE[d.k].war and F.members.has(desireNat(d)): wantOut = true
@@ -3217,7 +3225,7 @@ func cpuDiplomacy(nid: int) -> void:
 	cpuAid(nid)
 	if cpuAnnex(nid): return
 	cpuVassalOffer(nid)
-	var P: Dictionary = PERSONA.get(na.persona, PERSONA.bal)
+	var P: Dictionary = PERSONA.get(na.persona, PERSONA.neutral)
 	var top = topThreat()
 	var iAmTop: bool = top != null and top.id == nid
 	var myTgt = {}
@@ -3312,6 +3320,7 @@ func cpuDiplomacy(nid: int) -> void:
 		var vsTop: bool = top != null and not iAmTop and top.id != o.id and natHops(nid, top.id) <= DIP.reach and natHops(o.id, top.id) <= DIP.reach
 		if not common and not vsTop: continue
 		if allyDrags(nid, o.id): continue
+		if not ideoCompat(nid, o.id): continue
 		var need: float = DIP.allyMin - (8 if common else 0) - (DIP.threatAllyEase if vsTop else 0)
 		var need2: float = need - 6 if vsTop and nationsAdjacent(nid, top.id) else need
 		if favorOf(nid, o.id) < need2: continue
@@ -3332,10 +3341,12 @@ func cpuDiplomacy(nid: int) -> void:
 		var sm2 = smartAI(nid)
 		var mine2: float = atkCoalition(nid, o.id) if sm2 else nationPower(nid)
 		var th2: float = defCoalition(nid, o.id) if sm2 else max(1.0, nationPower(o.id))
-		if mine2 < th2 * (0.85 if sm2 else 0.7) or na.get("fatigue", 0) >= DIP.fatiguePeace:
+		var forced: bool = na.get("forceWar", -1) == o.id and mine2 >= th2 * 0.45
+		if (not forced and mine2 < th2 * ((0.6 if na.persona == "fascism" else 0.85) if sm2 else 0.7)) or na.get("fatigue", 0) >= DIP.fatiguePeace:
 			cancelWarPrep(nid, o.id)
 			G.dip.cool[nid][o.id] = G.turn + 5; G.dip.cool[o.id][nid] = G.turn + 5
 			continue
+		na.forceWar = -1
 		declareWar(nid, o.id)
 		return
 	_tp("prep")
@@ -3362,7 +3373,8 @@ func cpuDiplomacy(nid: int) -> void:
 		if DESIRE[d.k].war or d.k == "protect": wantWar = true
 		if d.k == "guard": guarding = true
 	var chanceMul: float = DES.warChanceMul if wantWar else (0.4 if guarding else (DES.noWishMul if G.nations.size() > 16 else 0.8))
-	if randf() > DIP.cpuWarChance.get(na.persona, 0.2) * crowdMul() * chanceMul: return
+	var fasc: bool = na.persona == "fascism"
+	if randf() > DIP.cpuWarChance.get(na.persona, 0.2) * (max(0.7, crowdMul()) if fasc else crowdMul()) * (max(1.0, chanceMul) if fasc else chanceMul): return
 	var mine = nationPower(nid)
 	var ambition: float = min(DIP.cpuAmbitionMax, G.turn * DIP.cpuAmbition)
 	var needW: float = DIP.cpuWarNeed.get(na.persona, 34)
@@ -3377,9 +3389,9 @@ func cpuDiplomacy(nid: int) -> void:
 		var th: float = defCoalition(nid, o.id) if sm else max(1.0, nationPower(o.id))
 		var mineC: float = atkCoalition(nid, o.id) if sm else mine
 		var cb = hasCB(nid, o.id)
-		if not cb and na.get("ideo") == "gougi": continue
+		if not cb and na.get("ideo") == "democracy": continue
 		if not cb and not (mineC >= th * 1.8 and randf() < P.noCB): continue
-		if sm and mineC < th * 0.95: continue
+		if sm and mineC < th * (0.7 if fasc else 0.95): continue
 		var sc: float = (mineC / th - 1) * 100 + (60 - favorOf(nid, o.id)) + ambition \
 			+ (15 if sm and busyFrac(o.id) > 0.2 else 0) \
 			+ threatOf(o.id) * DIP.threatWarBonus - danger * DIP.dangerWeight
@@ -3387,6 +3399,7 @@ func cpuDiplomacy(nid: int) -> void:
 		if isTopThreat(o.id): sc += 20
 		if isTrade(nid, o.id): sc -= 15
 		if not cb: sc -= 15
+		elif fasc: sc += 25
 		if dv != null: sc += 10 if dv.k == "guard" else DES.warBonus
 		if sc >= needW: cand.append({"id": o.id, "sc": sc})
 	if cand.is_empty():
@@ -3425,7 +3438,7 @@ func cpuPeaceTies(nid: int, P: Dictionary) -> void:
 		cs2.sort_custom(func(x, y): return nationPower(x.id) > nationPower(y.id))
 		if cs2.size():
 			var o = cs2[0]
-			var greedy: bool = o.persona == "aggr" and nationPower(o.id) > mine * 1.3
+			var greedy: bool = (o.persona == "aggr" or o.persona == "fascism") and nationPower(o.id) > mine * 1.3
 			if favorOf(o.id, nid) >= pactNeed(o.id) and not greedy: makePact(nid, o.id)
 func cpuFabricate(nid: int, P: Dictionary, mine: float) -> void:
 	if not (P.fab > 0) or randf() > P.fab * crowdMul(): return
@@ -3455,8 +3468,8 @@ func cpuVassal(nid: int, lord: int) -> void:
 	for o in G.nations:
 		if o.alive and atWar(lord, o.id) and o.id != nid: lordWar += 1
 	var ch = 0.12 + clamp_f(pw - 0.5, 0, 1.2) * 0.5 + lordWar * 0.12
-	if na.persona == "aggr": ch += 0.12
-	if na.persona == "econ": ch -= 0.06
+	if na.persona == "aggr" or na.persona == "fascism": ch += 0.12
+	if na.persona == "econ" or na.persona == "neutral": ch -= 0.06
 	if hasDesire(nid, "indep"): ch += 0.15
 	if randf() < ch: startRevolt(nid)
 func cpuVassalOffer(nid: int) -> void:
@@ -3721,7 +3734,7 @@ func settleTurn() -> void:
 func cpuSettle(nid: int) -> void:
 	if wildCount() == 0: return
 	var na = NAT(nid)
-	var P: Dictionary = PERSONA.get(na.persona, PERSONA.bal)
+	var P: Dictionary = PERSONA.get(na.persona, PERSONA.neutral)
 	var slots: int = FRONT.settleMax - settlingOf(nid).size()
 	if slots <= 0: return
 	var war = inWar(nid)
@@ -3916,7 +3929,7 @@ func cedeTerrs(from: int, to: int, n: int) -> Array:
 	return out
 func cpuWarGoal(a: int, b: int) -> String:
 	var ratio = nationPower(a) / max(1.0, nationPower(b))
-	var P: Dictionary = PERSONA.get(NAT(a).persona, PERSONA.bal)
+	var P: Dictionary = PERSONA.get(NAT(a).persona, PERSONA.neutral)
 	var dv = desireVs(a, b)
 	if dv != null and dv.get("t") != null: return "claim"
 	if dv != null and dv.k == "feud": return "vassal" if ratio >= DIP.vassalWarRatio else "capital"
@@ -4233,11 +4246,11 @@ func cpuEventChoice(na: Dictionary, ev: Dictionary) -> int:
 	var rich: bool = na.gold > 20000
 	var poor: bool = na.gold < 6000
 	if not _evOk(na, ev, 0): return 1
-	if ev.k == "merc": return 0 if rich and (na.persona == "aggr" or cpuDanger(na.id) >= 0.8) else 1
+	if ev.k == "merc": return 0 if rich and (na.persona == "aggr" or na.persona == "fascism" or cpuDanger(na.id) >= 0.8) else 1
 	if ev.k == "gen": return 0 if na.gens.size() < 6 and rich else 1
 	if ev.k == "good": return 0 if na.food < foodNeed(na.id) * 6 else 1
 	if poor: return 1
-	return 0 if na.persona == "econ" or na.persona == "def" or rich else 1
+	return 0 if na.persona == "econ" or na.persona == "def" or na.persona == "neutral" or na.persona == "democracy" or rich else 1
 
 # ---------- 年代記の節目 ----------
 const TERR_MILE := [5, 10, 15, 20, 30, 40, 50, 60, 70]
@@ -4388,10 +4401,10 @@ func cpuPolicy(nid: int, P: Dictionary) -> void:
 	elif danger >= 1.0: want = "total"
 	elif war: want = "total" if P.army > 0 else "mil"
 	elif hasDesire(nid, "guard"): want = "mil"
-	elif hasDesire(nid, "prosper"): want = "trade" if na.persona == "econ" else "civil"
-	elif na.persona == "econ": want = "trade"
-	elif na.persona == "def": want = "civil"
-	elif na.persona == "aggr": want = "mil"
+	elif hasDesire(nid, "prosper"): want = "trade" if na.persona == "econ" or na.persona == "neutral" else "civil"
+	elif na.persona == "econ" or na.persona == "neutral": want = "trade"
+	elif na.persona == "def" or na.persona == "democracy": want = "civil"
+	elif na.persona == "aggr" or na.persona == "fascism": want = "mil"
 	else: want = "trade" if randf() < 0.5 else "civil"
 	if want != na.get("policy", "none"): setPolicy(nid, want)
 
@@ -4423,7 +4436,7 @@ func cpuTurn(nid: int) -> void:
 	if not na.alive: return
 	var own = _ownOf(nid)
 	if own.is_empty(): return
-	var P: Dictionary = PERSONA.get(na.persona, PERSONA.bal)
+	var P: Dictionary = PERSONA.get(na.persona, PERSONA.neutral)
 	var _pt = [Time.get_ticks_usec(), "方針"]
 	var phase = func(msg: String):
 		var now = Time.get_ticks_usec()
@@ -4911,6 +4924,7 @@ func _resetCaches() -> void:
 	NBR = null; NBR_G = null; SEGN_DONE = null; COAST_G = null; HOP_G = null; ADJ_G = null
 	PW_KEY = ""; THR_KEY = ""; DG_KEY = ""; SUP_TERR_KEY = ""; SUP_DIRTY = true
 	FOCUS_CACHE = {}; SPROG_MEMO = {}; DIPQ = []
+	_treeCache = {}
 func beginGame() -> void:
 	_resetCaches()
 	UI.sel = null; UI.selArmy = null; UI.selRoad = null; UI.busy = false; UI.auto = false; UI.selNat = null
@@ -5037,7 +5051,10 @@ func loadSlot(i: int) -> bool:
 			g.terrs[k].sn = m.terrs[k].sn
 		g.edges = m.edges
 		g.nb = m.nb
-	if g.nations.size() and not g.nations[0].has("ideo"): hoiInit(g)
+	if g.nations.size() and not IDEO.has(g.nations[0].get("ideo", "")):
+		for n in g.nations:
+			n.erase("ideo")
+		hoiInit(g)
 	resetColors(g.get("ncol", null))
 	stopAuto()
 	G = g
@@ -5063,8 +5080,7 @@ func latestSlot() -> int:
 # （データは k9_data.gd）
 
 ## 工業の盛んな県は、最初から工場を持つ（[軍需, 民需]）
-const START_IND := {"東京都": [2, 3], "大阪府": [1, 3], "愛知県": [2, 2], "神奈川県": [1, 2], "兵庫県": [1, 2], "福岡県": [1, 2],
-	"京都府": [0, 2], "広島県": [1, 1], "静岡県": [1, 1], "埼玉県": [1, 1], "長崎県": [1, 1], "滋賀県": [1, 0], "鹿児島県": [1, 0]}
+const START_IND := {"群馬県": [3, 2], "東京都": [2, 3], "大阪府": [2, 4], "北海道": [2, 1], "長野県": [2, 2], "愛知県": [1, 2], "福岡県": [2, 2], "栃木県": [2, 1], "神奈川県": [1, 2], "兵庫県": [1, 1], "広島県": [1, 1], "埼玉県": [1, 1], "千葉県": [1, 1]}
 const EQ_PER_MF := 300       # 軍需工場1つの軍需品（毎ターン）
 const CF_GOLD := 300         # 民需工場1つのゴールド
 const EQ_COST := 0.5         # 兵1人に要る軍需品
@@ -5077,26 +5093,36 @@ func hoiInit(g: Dictionary) -> void:
 	gen.shuffle()
 	for na in g.nations:
 		if na.has("ideo"): continue
-		var ideo = "kunshu"
-		match na.persona:
-			"aggr": ideo = "gunsei" if randf() < 0.6 else "kunshu"
-			"econ": ideo = "gougi" if randf() < 0.6 else "kunshu"
-			"def": ideo = "kunshu" if randf() < 0.7 else "souson"
-			_: ideo = IDEO_KEYS[randi() % IDEO_KEYS.size()]
-		na.ideo = ideo
+		var cd = COUNTRY.get(na.name)
+		var ideo = ""
 		var pop = {}
-		for k in IDEO_KEYS: pop[k] = 10.0 + randf() * 10.0
-		pop[ideo] = 55.0
+		if cd != null:
+			ideo = cd.ideo
+			na.role = cd.r
+			for k in IDEO_KEYS: pop[k] = cd.pop.get(k, 2.0)
+			var rest = 0.0
+			for k in IDEO_KEYS:
+				if k != ideo: rest += pop[k]
+			pop[ideo] = max(40.0, 100.0 - rest)
+		else:
+			# 架空の大陸：思想はくじ（非同盟が多め）
+			var r = randf()
+			ideo = "neutral" if r < 0.4 else ("democracy" if r < 0.62 else ("fascism" if r < 0.82 else "communism"))
+			for k in IDEO_KEYS: pop[k] = 8.0 + randf() * 12.0
+			pop[ideo] = 55.0
+		na.ideo = ideo
+		na.persona = ideo
 		na.ipop = pop
 		_normPop(na)
-		na.stab = 55.0 + IDEO[ideo].stab
+		na.stab = 55.0 + IDEO[ideo].stab + (cd.get("stab", 0) if cd != null else 0)
 		na.ws = 25.0 + IDEO[ideo].ws
 		na.pp = 50.0
 		na.eq = 3000
 		na.spirits = []
+		na.guar = []
 		na.focus = {"cur": null, "prog": 0, "done": []}
-		var p = PREF.get(na.name)
-		if p != null: _addSpirit(na, p[0][0], p[0][1], p[0][2], "固有")
+		if cd != null:
+			for sp in cd.sp: _addSpirit(na, sp[0], sp[1], sp[2], "固有")
 		elif gen.size(): _addSpirit(na, gen[na.id % gen.size()][0], gen[na.id % gen.size()][1], gen[na.id % gen.size()][2], "固有")
 		hoiRecalc(na)
 		na.stab = clamp_f(na.stab + na.mods.get("stab", 0.0), 5, 95)
@@ -5141,7 +5167,7 @@ func hoiRecalc(na: Dictionary) -> void:
 	var m = {}
 	for sp in na.get("spirits", []):
 		for k in sp.m: m[k] = m.get(k, 0.0) + sp.m[k]
-	var im: Dictionary = IDEO.get(na.get("ideo", "kunshu"), IDEO.kunshu).mod
+	var im: Dictionary = IDEO.get(na.get("ideo", "neutral"), IDEO.neutral).mod
 	for k in im: m[k] = m.get(k, 0.0) + im[k]
 	na.mods = m
 ## 修正の値（国民精神と政体の合計）
@@ -5220,10 +5246,10 @@ func hoiTurn(nid: int) -> void:
 	na.stab = clamp_f(na.stab + (clamp_f(st, 0, 100) - na.stab) * 0.12, 0, 100)
 	na.ws = clamp_f(na.ws + (clamp_f(ws, 0, 100) - na.ws) * 0.12, 0, 100)
 	# 政体の支持率：与党は安定度が高いほど伸び、隣国の政体にも引っ張られる
-	na.ipop[na.ideo] = na.ipop[na.ideo] + (na.stab - 50) * 0.04
+	na.ipop[na.ideo] = na.ipop[na.ideo] + (na.stab - 40) * 0.02
 	for o in G.nations:
 		if o.alive and o.id != nid and nationsAdjacent(nid, o.id) and o.has("ideo"):
-			na.ipop[o.ideo] = na.ipop.get(o.ideo, 0.0) + 0.25
+			na.ipop[o.ideo] = na.ipop.get(o.ideo, 0.0) + 0.08
 	_normPop(na)
 	_ideoShift(na)
 	# 同じ政体どうしは近づき、違う政体とは少し離れる
@@ -5232,38 +5258,69 @@ func hoiTurn(nid: int) -> void:
 		if o.ideo == na.ideo:
 			if favorOf(nid, o.id) < 70: addFavor(nid, o.id, 0.4)
 		elif favorOf(nid, o.id) > 20: addFavor(nid, o.id, -0.15)
+	# 思想の合わない同盟は解ける
+	for o in G.nations:
+		if o.alive and o.id != nid and isAlly(nid, o.id) and not isVassal(o.id, nid) and not isVassal(nid, o.id) and not ideoCompat(nid, o.id) and randf() < 0.15:
+			breakAlly(nid, o.id)
+			chron("%s と %s の同盟が思想の違いで解消される" % [na.name, o.name], nid, "dip")
 	# 国家方針
 	_focusTurn(na)
-## 政変：ほかの政体の支持が過半を超え、安定度が低い（または圧倒的な支持）と政体が変わる
+## 政変：ほかの思想の支持が過半を超え、安定度が低い（または圧倒的な支持）と政権が変わる
 func _ideoShift(na: Dictionary) -> void:
 	var best: String = na.ideo
 	for k in IDEO_KEYS:
 		if na.ipop[k] > na.ipop[best]: best = k
 	if best == na.ideo: return
 	var p: float = na.ipop[best]
-	var coup: bool = p >= 50 and na.stab < 40
-	var peaceful: bool = p >= 65 and na.ideo != "gunsei"
+	var oneParty: bool = na.ideo == "fascism" or na.ideo == "communism"
+	var coup: bool = p >= 50 and na.stab < (25 if oneParty else 40)
+	var peaceful: bool = p >= 65 and na.ideo != "fascism" and na.ideo != "communism"
 	if not coup and not peaceful: return
+	setGov(na, best, "政変" if coup else "選挙")
+## 政権を別の思想に変える（ふるまいも変わる）
+func setGov(na: Dictionary, k: String, why: String) -> void:
+	if na.ideo == k: return
 	var old: String = na.ideo
-	na.ideo = best
-	na.ipop[best] = max(na.ipop[best], 55.0)
+	na.ideo = k
+	na.persona = k
+	na.ipop[k] = max(na.ipop.get(k, 0.0), 55.0)
 	_normPop(na)
 	hoiRecalc(na)
-	na.stab = clamp_f(na.stab - (15 if coup else 5), 0, 100)
-	var msg = "%s で%s — %s から %s へ" % [na.name, "政変" if coup else "政体の移行", IDEO[old].n, IDEO[best].n]
-	logMsg(msg, "war" if coup else "")
+	na.stab = clamp_f(na.stab - (15 if why == "政変" else 5), 0, 100)
+	var msg = "%s で%s — %s から %s の政権へ" % [na.name, why, IDEO[old].n, IDEO[k].n]
+	logMsg(msg, "war" if k == "fascism" or why == "政変" else "")
 	chron(msg, na.id, "gov")
+	# 盟主と思想が違う陣営からは抜ける
+	var F = facOf(na.id)
+	if F != null and F.leader != na.id and NAT(F.leader).get("ideo") != k: leaveFaction(na.id, "政権交代")
+## 1ターン＝1か月（1936年1月から）
+func dateStr(turn: int) -> String:
+	return "%d年%d月" % [1936 + (turn - 1) / 12, (turn - 1) % 12 + 1]
+func natByName(nm: String) -> int:
+	for o in G.nations:
+		if o.alive and o.name == nm: return o.id
+	return -1
+func roleOf(nid: int) -> String: return NAT(nid).get("role", "")
 
 # ---------- 国家方針 ----------
 var _treeCache = {}
-## その国の方針ツリー（共通の枝＋固有の枝）
+## その国の方針ツリー（共通の枝＋固有の枝。大国は産業・軍事の枝と大きな固有ツリー）
 func focusTree(na: Dictionary) -> Array:
 	if _treeCache.has(na.name): return _treeCache[na.name]
-	var out = FOCUS_COMMON.duplicate(true)
-	var p = PREF.get(na.name)
-	if p != null:
-		var chain: Array = p[1]
-		var fin: Array = p[2]
+	var cd = COUNTRY.get(na.name) if G.get("size") == "japan" else null
+	var major: bool = cd != null and cd.has("tree")
+	var out = []
+	for f in FOCUS_COMMON:
+		if not major or f.br == "ind" or f.br == "mil": out.append(f.duplicate(true))
+	if major:
+		for f in cd.tree:
+			var g: Dictionary = f.duplicate(true)
+			g.x = 6.0 + f.x
+			g.br = "uniq"
+			out.append(g)
+	elif cd != null:
+		var chain: Array = cd.chain
+		var fin: Array = cd.fin
 		var prev = ""
 		for i in chain.size():
 			var id = "u%d" % i
@@ -5274,6 +5331,8 @@ func focusTree(na: Dictionary) -> Array:
 			out.append({"id": id2, "n": fin[j][0], "x": FOCUS_UNIQUE_X + j, "y": chain.size(), "t": 8, "req": [prev], "ex": ["u3%s" % ["b", "a"][j]], "br": "uniq", "e": fin[j][1]})
 	_treeCache[na.name] = out
 	return out
+func isMajor(na: Dictionary) -> bool:
+	return G.get("size") == "japan" and COUNTRY.get(na.name, {}).has("tree")
 func focusById(na: Dictionary, id: String):
 	for f in focusTree(na):
 		if f.id == id: return f
@@ -5300,28 +5359,37 @@ func _focusTurn(na: Dictionary) -> void:
 			fc.done.append(f.id)
 			fc.cur = null
 			fc.prog = 0
-			_applyFocus(na, f)
-			var msg = "%s が国家方針「%s」を達成" % [na.name, f.n]
-			if concerns([na.id]): logMsg(msg, "good")
+			var msg = "%s（%s）が国家方針「%s」を達成" % [na.name, na.get("role", ""), f.n] if na.get("role", "") != "" else "%s が国家方針「%s」を達成" % [na.name, f.n]
+			if concerns([na.id]) or (f.br == "uniq" and isMajor(na)): logMsg(msg, "good")
 			chron(msg, na.id, "gov")
+			_applyFocus(na, f)
 	if fc.cur == null: _pickFocus(na)
+const WAR_FX := ["warOn", "claimOn", "demand", "claim"]
 func _pickFocus(na: Dictionary) -> void:
 	var cands = []
 	var war = inWar(na.id)
+	var id: String = na.ideo
 	for f in focusTree(na):
 		if not focusAvailable(na, f): continue
-		var w = 10.0
+		var w: float = 10.0 * f.get("w", 1.0)
 		match f.br:
-			"uniq": w *= 2.5
-			"ind": w *= 1.8 if na.persona == "econ" else 1.0
-			"mil": w *= (1.8 if na.persona == "aggr" or na.persona == "def" else 1.0) * (2.0 if war else 1.0)
+			"uniq": w *= 7.0 if isMajor(na) else 3.0
+			"ind": w *= 1.6 if id == "neutral" or id == "democracy" else 1.0
+			"mil": w *= (1.8 if id == "fascism" or id == "communism" else 1.0) * (2.0 if war else 1.0)
 			"pol": w *= 2.0 if na.stab < 45 else 1.0
-			"dip": w *= 1.4 if na.persona == "econ" or na.persona == "bal" else 0.8
+			"dip": w *= 1.3 if id == "democracy" or id == "neutral" else 0.8
 		var e: Dictionary = f.e
 		if e.has("ideo"):
 			var k: String = e.ideo[0]
-			w *= 3.0 if k == na.ideo else (0.6 + na.ipop.get(k, 0.0) / 40.0)
-		if e.has("claim") and na.ws < IDEO[na.ideo].wsNeed - 15: w *= 0.4
+			w *= 2.0 if k == id else (0.6 + na.ipop.get(k, 0.0) / 40.0)
+		if e.has("gov"): w *= 1.0 + na.ipop.get(e.gov, 0.0) / 15.0
+		for x in WAR_FX:
+			if e.has(x):
+				w *= 2.0 if id == "fascism" else (0.3 if id == "democracy" else 1.0)
+				break
+		if e.has("joinFac"):
+			var F = _facNamed(e.joinFac)
+			if F != null and NAT(F.leader).get("ideo") != id: w *= 0.3
 		cands.append([f, w])
 	if cands.is_empty(): return
 	var sum = 0.0
@@ -5345,6 +5413,7 @@ func _applyFocus(na: Dictionary, f: Dictionary) -> void:
 	if e.has("eq"): na.eq += e.eq
 	if e.has("mf"): _buildFactories(nid, "mf", e.mf)
 	if e.has("cf"): _buildFactories(nid, "cf", e.cf)
+	if e.has("gov"): setGov(na, e.gov, "方針「%s」" % f.n)
 	if e.has("ideo"):
 		na.ipop[e.ideo[0]] = na.ipop.get(e.ideo[0], 0.0) + e.ideo[1]
 		_normPop(na)
@@ -5374,11 +5443,131 @@ func _applyFocus(na: Dictionary, f: Dictionary) -> void:
 	if e.has("favor"):
 		for o in G.nations:
 			if o.alive and o.id != nid and nationsAdjacent(nid, o.id): addFavor(o.id, nid, e.favor)
+	if e.has("pact"):
+		var o = natByName(e.pact)
+		if o >= 0 and o != nid and relState(nid, o) == "peace":
+			makePact(nid, o)
+			chron("%s と %s が不可侵条約を結ぶ（%s）" % [na.name, NAT(o).name, f.n], nid, "dip")
+	if e.has("claimOn"):
+		for nm in e.claimOn:
+			var o = natByName(nm)
+			if o >= 0 and o != nid and not sameFaction(nid, o) and lordOf(o) != nid:
+				if na.ideo == "fascism" or na.ideo == "communism": _turnOn(nid, o)
+				grantCB(nid, o, "「%s」" % f.n, 40)
+				chron("%s が %s への領有権を主張（%s）" % [na.name, NAT(o).name, f.n], nid, "dip")
+	if e.has("fac"): _facCreate(nid, e.fac)
+	if e.has("joinFac"): _facJoin(nid, e.joinFac)
+	if e.has("invite"):
+		var F = facOf(nid)
+		if F != null and F.leader == nid:
+			for nm in e.invite:
+				var o = natByName(nm)
+				if o >= 0 and o != nid and facOf(o) == null and lordOf(o) == null and not atWar(nid, o) and NAT(o).get("ideo") == na.ideo:
+					joinFaction(F, o)
+	if e.has("guar"):
+		for nm in e.guar:
+			var o = natByName(nm)
+			if o >= 0 and o != nid and not na.guar.has(o):
+				na.guar.append(o)
+				var msg = "%s が %s の独立を保証する" % [na.name, NAT(o).name]
+				if concerns([nid, o]): logMsg(msg, "good")
+				chron(msg, nid, "dip")
+	if e.has("demand"):
+		for nm in e.demand:
+			var o = natByName(nm)
+			if o >= 0: _demand(na, o, f.n)
+	if e.has("warOn"):
+		var o = natByName(e.warOn)
+		if o >= 0 and o != nid and not sameFaction(nid, o) and lordOf(o) != nid:
+			_turnOn(nid, o)
+			grantCB(nid, o, "「%s」" % f.n, 40)
+			na.ws = clamp_f(na.ws + 10, 0, 100)
+			if not inWar(nid) and nationsAdjacent(nid, o) and canPrepare(nid, o) and hoiWarOK(nid, o):
+				startWarPrep(nid, o)
+				na.forceWar = o
 	nations_changed.emit()
+## 併合・従属の要求（アンシュルス・ズデーテンなど）。断られたら大義を得る
+func _demand(na: Dictionary, o: int, why: String) -> void:
+	var nid: int = na.id
+	var B = NAT(o)
+	if not B.alive or o == nid or lordOf(o) == nid or sameFaction(nid, o) or atWar(nid, o): return
+	var theirs = nationPower(o)
+	var F = facOf(o)
+	if F != null:
+		for m in F.members:
+			if m != o and NAT(m).alive: theirs += nationPower(m) * 0.5
+	for g in G.nations:
+		if g.alive and g.id != nid and g.get("guar", []).has(o): theirs += nationPower(g.id) * 0.5
+	var ratio = nationPower(nid) / max(1.0, theirs)
+	var same: bool = B.get("ideo") == na.ideo
+	var sympathy: float = B.get("ipop", {}).get(na.ideo, 0.0)
+	var annexOK: bool = not inWar(o) and (ratio >= 2.2 or (same and ratio >= 1.2) or (sympathy >= 40 and ratio >= 1.0))
+	var msg = ""
+	if annexOK and nationsAdjacent(nid, o):
+		msg = "%s が %s の要求を受け入れ、併合される（%s）" % [B.name, na.name, why]
+		logMsg(msg, "war")
+		chron(msg, nid, "dip")
+		annex(nid, o, why)
+	elif not inWar(o) and ratio >= 1.6 and lordOf(o) == null and vassalsOf(o).is_empty():
+		msg = "%s が %s の要求を受け入れ、従属する（%s）" % [B.name, na.name, why]
+		logMsg(msg, "war")
+		chron(msg, nid, "dip")
+		makeVassal(nid, o, why)
+	else:
+		grantCB(nid, o, "「%s」の要求を拒否された" % why, 40)
+		_turnOn(nid, o)
+		na.ws = clamp_f(na.ws + 10, 0, 100)
+		msg = "%s が %s の要求（%s）を拒否する" % [B.name, na.name, why]
+		logMsg(msg, "war")
+		chron(msg, nid, "dip")
+		if na.ideo == "fascism" and not inWar(nid) and nationsAdjacent(nid, o) and canPrepare(nid, o) and hoiWarOK(nid, o):
+			startWarPrep(nid, o)
+			na.forceWar = o
+func _facNamed(name: String):
+	for F in G.get("factions", {}).values():
+		if F.name == name: return F
+	return null
+const FAC_IDEO := {"枢軸": "fascism", "連合国": "democracy", "コミンテルン": "communism"}
+## 盟主と敵対する思想でなければ陣営に入れる
+func facFit(a: int, b: int) -> bool:
+	var x: String = NAT(a).get("ideo", "")
+	var y: String = NAT(b).get("ideo", "")
+	if x == y or x == "neutral" or y == "neutral": return true
+	return false
+func _facCreate(nid: int, name: String) -> void:
+	var F = facOf(nid)
+	if F != null:
+		if F.leader == nid and _facNamed(name) == null: F.name = name
+		return
+	if _facNamed(name) != null:
+		_facJoin(nid, name)
+		return
+	makeFaction(nid, name)
+func _facJoin(nid: int, name: String) -> void:
+	var F = _facNamed(name)
+	var cur = facOf(nid)
+	if F == null:
+		if cur == null and isMajor(NAT(nid)) and FAC_IDEO.get(name, NAT(nid).ideo) == NAT(nid).ideo: makeFaction(nid, name)
+		return
+	if cur == F: return
+	if not facFit(nid, F.leader): return
+	for m in F.members:
+		if atWar(nid, m): return
+	if cur != null: leaveFaction(nid, "quiet")
+	joinFaction(F, nid)
+## 宣戦された国に保証を与えている国は参戦する
+func hoiGuarantee(a: int, b: int) -> void:
+	var wid = warOf(a, b)
+	for g in G.nations:
+		if not g.alive or g.id == a or g.id == b: continue
+		if not g.get("guar", []).has(b): continue
+		if atWar(g.id, a) or sameFaction(g.id, a) or isAlly(g.id, a) or lordOf(g.id) != null: continue
+		enterWar(g.id, a, "%s の独立の保証により参戦" % NAT(b).name, wid)
 ## 方針の効果を文で
 func focusDesc(f: Dictionary) -> String:
 	var e: Dictionary = f.e
 	var s = []
+	if e.has("gov"): s.append("%s の政権になる" % IDEO[e.gov].n)
 	if e.has("rm"): s.append("「%s」を外す" % e.rm)
 	if e.has("sp"): s.append("国民精神「%s」（%s）" % [e.sp[0], e.sp[1]])
 	if e.has("stab"): s.append("安定度 %+d" % e.stab)
@@ -5391,205 +5580,356 @@ func focusDesc(f: Dictionary) -> String:
 	if e.has("ideo"): s.append("%s の支持 +%d" % [IDEO[e.ideo[0]].n, e.ideo[1]])
 	if e.has("dev"): s.append("町%dか所の開発度 +1" % e.dev)
 	if e.has("infra"): s.append("%dか所のインフラ +1" % e.infra)
-	if e.has("claim"): s.append("隣国への大義（25ターン）")
+	if e.has("claim"): s.append("弱い隣国への大義（25ターン）")
 	if e.has("favor"): s.append("隣国の好感度 +%d" % e.favor)
+	if e.has("pact"): s.append("%s と不可侵条約" % _roleName(e.pact))
+	if e.has("claimOn"): s.append("%s への大義" % "・".join(e.claimOn.map(_roleName)))
+	if e.has("warOn"): s.append("%s への大義と開戦準備" % _roleName(e.warOn))
+	if e.has("demand"): s.append("%s に併合・従属を要求（断られたら大義）" % "・".join(e.demand.map(_roleName)))
+	if e.has("guar"): s.append("%s の独立を保証（攻められたら参戦）" % "・".join(e.guar.map(_roleName)))
+	if e.has("fac"): s.append("陣営「%s」を結成" % e.fac)
+	if e.has("joinFac"): s.append("陣営「%s」に加わる" % e.joinFac)
+	if e.has("invite"): s.append("%s を陣営に招く" % "・".join(e.invite.map(_roleName)))
 	return "・".join(s)
-## 戦を始められるだけの戦争支持があるか（合議制は大義も要る）
+func _roleName(nm: String) -> String:
+	var cd = COUNTRY.get(nm)
+	return ("%s（%s）" % [cd.r, nm.trim_suffix("県").trim_suffix("都").trim_suffix("府")]) if cd != null else nm
+## 戦を始められるだけの戦争支持があるか（民主主義は大義も要る）
 var HOI_GATE = true
 func hoiWarOK(nid: int, target := -1) -> bool:
 	if not HOI_GATE: return true
 	var na = NAT(nid)
 	if not na.has("ideo"): return true
 	if na.ws < IDEO[na.ideo].wsNeed: return false
-	if na.ideo == "gougi" and target >= 0 and not hasCB(nid, target): return false
+	if na.ideo == "democracy" and target >= 0 and not hasCB(nid, target): return false
 	return true
+## 思想の相性：ファシズム・共産主義は同じ思想としか同盟しない
+func ideoCompat(a: int, b: int) -> bool:
+	var x: String = NAT(a).get("ideo", "")
+	var y: String = NAT(b).get("ideo", "")
+	if x == "" or y == "" or x == y: return true
+	return not (x == "fascism" or x == "communism" or y == "fascism" or y == "communism")
+## 不可侵条約を更新してよいか（ファシズムは大義を持つ相手とは更新しない）
+func pactOK(a: int, b: int) -> bool:
+	if NAT(a).get("ideo") == "fascism" and hasCB(a, b): return false
+	if NAT(b).get("ideo") == "fascism" and hasCB(b, a): return false
+	return true
+## 方針で狙う相手とは同盟・条約を解く
+func _turnOn(nid: int, o: int) -> void:
+	if isAlly(nid, o) and not isVassal(o, nid) and not isVassal(nid, o): breakAlly(nid, o)
+	if pactLeft(nid, o) > 0:
+		G.dip.pact[nid][o] = 0; G.dip.pact[o][nid] = 0
+		chron("%s が %s との不可侵条約を破棄する" % [NAT(nid).name, NAT(o).name], nid, "dip")
 
 # ==================== k9_data.gd ====================
-# HOI4を参考にした仕組みのデータ：政体・国民精神・国家方針ツリー（共通の枝＋県ごとの固有の枝）
+# HOI4を参考にした歴史IFのデータ：思想（政党）・国民精神・国家方針ツリー
+# 47都道府県それぞれを1936年の国に見立てる（群馬＝ドイツ、北海道＝ソ連 …）
 # 方針の効果のキー：
 #   sp=[名前, 説明, {修正}]（国民精神を得る） rm="精神の名前"（外す）
 #   stab/ws/pp=安定度・戦争支持・政治力  mf/cf=軍需・民需工場を建てる数  eq=軍需品  gold=ゴールド
-#   ideo=[政体, 支持率]  dev=開発度を上げる領地の数  infra=インフラを上げる領地の数  claim=1（隣国への大義）
+#   ideo=[思想, 支持率]（支持を上げる） gov="思想"（その思想の政権に変わる）
+#   dev/infra=開発度・インフラを上げる領地の数  favor=隣国の好感度
+#   claim=1（弱い隣国への大義） claimOn=[県]（その国への大義） warOn="県"（大義＋開戦準備）
+#   demand=[県]（併合・従属の要求。断られたら大義） guar=[県]（独立の保証：攻められたら参戦） pact="県"（不可侵条約）
+#   fac="陣営名"（陣営を作る） joinFac="陣営名"（その陣営に入る。なければ作る） invite=[県]（自分の陣営に招く）
 # 修正（国民精神）のキー：gold/food/troop（兵の生産）/atk/def/pop（人口上限）/grow（人口の伸び）/sec（毎ターンの治安）
 #   stab/ws（安定度・戦争支持の目標）/mf/cf（工場の出力）/build（建設費、負で安く）/fort（砦の防御）/pp（政治力）
 
+## 思想（与党）。政権を握る思想で国のふるまい（IDEO_PERSONA）が決まる
 const IDEO := {
-	"kunshu": {"n": "君主制", "c": "#b8a98a", "d": "国主のもとでまとまる。安定しやすい", "stab": 10, "ws": 0, "wsNeed": 50, "pp": 2.0, "mod": {}},
-	"gougi": {"n": "合議制", "c": "#6f9fd0", "d": "重臣と町衆の合議で治める。大義なき戦はできず、戦争支持が高くないと宣戦しない。商いが栄える", "stab": 5, "ws": -10, "wsNeed": 65, "pp": 1.5, "mod": {"gold": 0.10}},
-	"gunsei": {"n": "軍政", "c": "#c0504a", "d": "武断の家臣団が実権を握る。戦争支持が高く、兵の生産と攻撃に優れるが安定しにくい", "stab": -5, "ws": 20, "wsNeed": 35, "pp": 2.5, "mod": {"troop": 0.10, "atk": 0.05}},
-	"souson": {"n": "惣国", "c": "#7fae6a", "d": "惣村と一揆衆による民衆の自治。人口が伸び、軍需が盛ん", "stab": 0, "ws": 5, "wsNeed": 50, "pp": 2.0, "mod": {"grow": 0.15, "mf": 0.10}},
+	"democracy": {"n": "民主主義", "c": "#4f8fd6", "d": "選挙で選ばれた政府。大義のない戦はせず、戦争支持がかなり高くないと宣戦しない。条約と保証で守る", "stab": 10, "ws": -15, "wsNeed": 70, "pp": 2.0, "mod": {"gold": 0.05}},
+	"communism": {"n": "共産主義", "c": "#c0392b", "d": "党による計画経済。重工業が強く、同じ思想の国を陣営に引き込む", "stab": 0, "ws": 5, "wsNeed": 50, "pp": 2.0, "mod": {"mf": 0.10, "troop": 0.05}},
+	"fascism": {"n": "ファシズム", "c": "#8a6d3b", "d": "拡張主義。戦争支持が上がりやすく、口実を作ってでも隣国を狙う。兵の生産 +15%・攻撃 +10%・防御 +5%", "stab": 0, "ws": 20, "wsNeed": 30, "pp": 2.5, "mod": {"troop": 0.15, "atk": 0.10, "def": 0.05}},
+	"neutral": {"n": "非同盟", "c": "#9b9484", "d": "王政・軍人政権・権威主義の政府。内政を優先し、攻められた時に戦う", "stab": 5, "ws": 0, "wsNeed": 55, "pp": 2.0, "mod": {}},
 }
-const IDEO_KEYS := ["kunshu", "gougi", "gunsei", "souson"]
+const IDEO_KEYS := ["democracy", "communism", "fascism", "neutral"]
+
+## 思想ごとの国のふるまい（元の「気質」を置き換える）
+const IDEO_PERSONA := {
+	"fascism": {"n": "ファシズム", "d": "拡張主義", "army": 1, "goal": 0.85, "atkTh": 1.05, "guard": 0.34, "mkt": 0.22, "devG": 9000, "roadG": 21000, "mix": {"inf": 0.42, "spe": 0.13, "arc": 0.20, "cav": 0.25}, "settle": 0.8,
+		"tradeW": -10, "pactW": -10, "fab": 0.5, "noCB": 0.15, "peaceW": -0.03, "dd": "拡張主義：口実を作ってでも弱い隣国を狙う。条約は都合のよい時だけ"},
+	"communism": {"n": "共産主義", "d": "世界革命", "army": 0, "goal": 1.0, "atkTh": 1.2, "guard": 0.50, "mkt": 0.30, "devG": 6000, "roadG": 16000, "mix": {"inf": 0.48, "spe": 0.22, "arc": 0.18, "cav": 0.12}, "settle": 1.1,
+		"tradeW": 0, "pactW": 5, "fab": 0.25, "noCB": 0.0, "peaceW": 0.02, "dd": "世界革命：大義があり勝てる時に戦う。同じ思想の国を陣営に引き込む"},
+	"democracy": {"n": "民主主義", "d": "集団安全保障", "army": 0, "goal": 1.10, "atkTh": 1.50, "guard": 0.62, "mkt": 0.50, "devG": 5000, "roadG": 13000, "mix": {"inf": 0.40, "spe": 0.30, "arc": 0.20, "cav": 0.10}, "settle": 1.2,
+		"tradeW": 15, "pactW": 20, "fab": 0.0, "noCB": 0.0, "peaceW": 0.06, "dd": "集団安全保障：大義のない戦はしない。通商・条約・保証で守りを固める"},
+	"neutral": {"n": "非同盟", "d": "内政優先", "army": -1, "goal": 1.10, "atkTh": 1.40, "guard": 0.55, "mkt": 0.55, "devG": 4000, "roadG": 11000, "mix": {"inf": 0.45, "spe": 0.22, "arc": 0.20, "cav": 0.13}, "settle": 1.4,
+		"tradeW": 10, "pactW": 15, "fab": 0.05, "noCB": 0.0, "peaceW": 0.07, "dd": "内政優先：国を富ませ、攻められた時に戦う。早く講和する"},
+}
 
 ## 共通の方針ツリー（x=列 y=段。req=前提（どれか1つ） ex=同時に取れない方針）
+## 大国（tree を持つ国）は産業・軍事の枝だけを使う
 const FOCUS_COMMON := [
 	{"id": "c_ind1", "n": "殖産興業", "x": 0, "y": 0, "t": 5, "req": [], "br": "ind", "e": {"cf": 1, "pp": 10}},
-	{"id": "c_ind2", "n": "鍛冶場の拡充", "x": 0, "y": 1, "t": 6, "req": ["c_ind1"], "br": "ind", "e": {"mf": 1}},
-	{"id": "c_ind3", "n": "治水と開墾", "x": 1, "y": 1, "t": 6, "req": ["c_ind1"], "br": "ind", "e": {"sp": ["治水と開墾", "食料 +15%・人口上限 +5%", {"food": 0.15, "pop": 0.05}]}},
-	{"id": "c_ind4", "n": "職人の招致", "x": 0, "y": 2, "t": 7, "req": ["c_ind2"], "br": "ind", "e": {"sp": ["職人の町", "軍需工場の出力 +15%・民需工場の出力 +10%", {"mf": 0.15, "cf": 0.10}], "cf": 1}},
-	{"id": "c_ind5", "n": "街道の普請", "x": 1, "y": 2, "t": 6, "req": ["c_ind3"], "br": "ind", "e": {"infra": 3, "sp": ["整った街道", "建設費 -10%・ゴールド +5%", {"build": -0.10, "gold": 0.05}]}},
-	{"id": "c_mil1", "n": "軍制改革", "x": 3, "y": 0, "t": 5, "req": [], "br": "mil", "e": {"sp": ["軍制改革", "攻撃 +5%", {"atk": 0.05}], "ws": 5}},
+	{"id": "c_ind2", "n": "軍需産業の拡充", "x": 0, "y": 1, "t": 6, "req": ["c_ind1"], "br": "ind", "e": {"mf": 1}},
+	{"id": "c_ind3", "n": "農業の機械化", "x": 1, "y": 1, "t": 6, "req": ["c_ind1"], "br": "ind", "e": {"sp": ["農業の機械化", "食料 +15%・人口上限 +5%", {"food": 0.15, "pop": 0.05}]}},
+	{"id": "c_ind4", "n": "技術者の育成", "x": 0, "y": 2, "t": 7, "req": ["c_ind2"], "br": "ind", "e": {"sp": ["技術者の育成", "軍需工場の出力 +15%・民需工場の出力 +10%", {"mf": 0.15, "cf": 0.10}]}},
+	{"id": "c_ind5", "n": "鉄道網の整備", "x": 1, "y": 2, "t": 6, "req": ["c_ind3"], "br": "ind", "e": {"infra": 3, "sp": ["鉄道網", "建設費 -10%・ゴールド +5%", {"build": -0.10, "gold": 0.05}]}},
+	{"id": "c_mil1", "n": "陸軍の改革", "x": 3, "y": 0, "t": 5, "req": [], "br": "mil", "e": {"sp": ["陸軍の改革", "攻撃 +5%", {"atk": 0.05}], "ws": 5}},
 	{"id": "c_mil2", "n": "兵站の整備", "x": 3, "y": 1, "t": 6, "req": ["c_mil1"], "br": "mil", "e": {"eq": 3000, "mf": 1}},
-	{"id": "c_mil3", "n": "城郭の普請", "x": 4, "y": 1, "t": 6, "req": ["c_mil1"], "br": "mil", "e": {"sp": ["堅固な城郭", "砦の防御 +15%・防御 +5%", {"fort": 0.15, "def": 0.05}]}},
-	{"id": "c_mil4", "n": "精鋭の育成", "x": 3, "y": 2, "t": 7, "req": ["c_mil2", "c_mil3"], "br": "mil", "e": {"sp": ["精鋭の兵", "攻撃 +5%・防御 +5%", {"atk": 0.05, "def": 0.05}], "ws": 5}},
-	{"id": "c_pol1", "n": "家中の統制", "x": 6, "y": 0, "t": 5, "req": [], "br": "pol", "e": {"stab": 10, "pp": 20}},
-	{"id": "c_pol_k", "n": "王道を敷く", "x": 5, "y": 1, "t": 7, "req": ["c_pol1"], "ex": ["c_pol_g", "c_pol_m", "c_pol_s"], "br": "pol", "e": {"ideo": ["kunshu", 30], "stab": 10}},
-	{"id": "c_pol_g", "n": "合議の道", "x": 6, "y": 1, "t": 7, "req": ["c_pol1"], "ex": ["c_pol_k", "c_pol_m", "c_pol_s"], "br": "pol", "e": {"ideo": ["gougi", 30], "sp": ["町衆の自治", "ゴールド +10%・治安 +1/ターン", {"gold": 0.10, "sec": 1}]}},
-	{"id": "c_pol_m", "n": "武断の道", "x": 7, "y": 1, "t": 7, "req": ["c_pol1"], "ex": ["c_pol_k", "c_pol_g", "c_pol_s"], "br": "pol", "e": {"ideo": ["gunsei", 30], "ws": 15}},
-	{"id": "c_pol_s", "n": "惣の結束", "x": 8, "y": 1, "t": 7, "req": ["c_pol1"], "ex": ["c_pol_k", "c_pol_g", "c_pol_m"], "br": "pol", "e": {"ideo": ["souson", 30], "sp": ["惣の結束", "人口の伸び +10%・兵の生産 +5%", {"grow": 0.10, "troop": 0.05}]}},
+	{"id": "c_mil3", "n": "国境の要塞化", "x": 4, "y": 1, "t": 6, "req": ["c_mil1"], "br": "mil", "e": {"sp": ["国境の要塞", "砦の防御 +15%・防御 +5%", {"fort": 0.15, "def": 0.05}]}},
+	{"id": "c_mil4", "n": "機甲戦の研究", "x": 3, "y": 2, "t": 7, "req": ["c_mil2", "c_mil3"], "br": "mil", "e": {"sp": ["機甲戦の研究", "攻撃 +5%・防御 +5%", {"atk": 0.05, "def": 0.05}], "ws": 5}},
+	{"id": "c_pol1", "n": "政治の刷新", "x": 6, "y": 0, "t": 5, "req": [], "br": "pol", "e": {"stab": 10, "pp": 20}},
+	{"id": "c_pol_d", "n": "民主主義の擁護", "x": 5, "y": 1, "t": 7, "req": ["c_pol1"], "ex": ["c_pol_c", "c_pol_f", "c_pol_n"], "br": "pol", "e": {"ideo": ["democracy", 30], "stab": 10}},
+	{"id": "c_pol_c", "n": "人民戦線", "x": 6, "y": 1, "t": 7, "req": ["c_pol1"], "ex": ["c_pol_d", "c_pol_f", "c_pol_n"], "br": "pol", "e": {"ideo": ["communism", 30], "sp": ["労働者の団結", "軍需工場の出力 +10%", {"mf": 0.10}]}},
+	{"id": "c_pol_f", "n": "国民革命", "x": 7, "y": 1, "t": 7, "req": ["c_pol1"], "ex": ["c_pol_d", "c_pol_c", "c_pol_n"], "br": "pol", "e": {"ideo": ["fascism", 30], "ws": 15}},
+	{"id": "c_pol_n", "n": "中立の堅持", "x": 8, "y": 1, "t": 7, "req": ["c_pol1"], "ex": ["c_pol_d", "c_pol_c", "c_pol_f"], "br": "pol", "e": {"ideo": ["neutral", 30], "sp": ["中立", "安定度 +10・防御 +5%", {"stab": 10.0, "def": 0.05}]}},
 	{"id": "c_dip1", "n": "外交使節", "x": 10, "y": 0, "t": 5, "req": [], "br": "dip", "e": {"favor": 15, "pp": 10}},
-	{"id": "c_dip2", "n": "交易路の確保", "x": 10, "y": 1, "t": 6, "req": ["c_dip1"], "br": "dip", "e": {"sp": ["交易路", "ゴールド +10%", {"gold": 0.10}]}},
+	{"id": "c_dip2", "n": "通商協定", "x": 10, "y": 1, "t": 6, "req": ["c_dip1"], "br": "dip", "e": {"sp": ["通商協定", "ゴールド +10%", {"gold": 0.10}]}},
 	{"id": "c_dip3", "n": "領有権の主張", "x": 11, "y": 1, "t": 6, "req": ["c_dip1"], "br": "dip", "e": {"claim": 1, "ws": 10}},
 ]
 
-## 県ごとの初期の国民精神と固有の方針（4つが順につながる。最後の段は2つから1つ）
-## [精神の名前, 説明, 修正], 方針 = [名前, 効果] ×3 と、最後の選択 [[名前, 効果], [名前, 効果]]
-const PREF := {
-	"北海道": [["厳寒の大地", "人口上限 -25%・食料 -30%・兵の生産 -25%・ゴールド -20%", {"pop": -0.25, "food": -0.3, "troop": -0.25, "gold": -0.20}],
-		[["開拓使の設置", {"cf": 1, "pp": 15}], ["屯田兵制度", {"sp": ["屯田兵", "兵の生産 +10%・食料 +10%", {"troop": 0.10, "food": 0.10}]}], ["寒地農法の確立", {"rm": "厳寒の大地", "sp": ["寒地の暮らし", "人口上限 -15%・食料 -10%・ゴールド -10%", {"pop": -0.15, "food": -0.1, "gold": -0.10}]}]],
-		[["北方の守り", {"sp": ["北方の守り", "防御 +10%・砦の防御 +10%", {"def": 0.10, "fort": 0.10}]}], ["蝦夷地の交易", {"sp": ["北前の交易", "ゴールド +15%", {"gold": 0.15}]}]]],
-	"青森県": [["津軽と南部の確執", "安定度 -10・戦争支持 +10", {"stab": -10, "ws": 10}],
-		[["津軽の統一", {"stab": 15, "rm": "津軽と南部の確執"}], ["林檎の栽培", {"sp": ["林檎の里", "食料 +10%・ゴールド +5%", {"food": 0.10, "gold": 0.05}]}], ["陸奥湾の湊", {"cf": 1, "gold": 3000}]],
-		[["北の関門", {"sp": ["北の関門", "防御 +10%", {"def": 0.10}]}], ["蝦夷への渡海", {"claim": 1, "ws": 10}]]],
-	"岩手県": [["南部の馬", "騎兵の生産 +20%（兵の生産 +5%）", {"troop": 0.05}],
-		[["南部鉄器", {"mf": 1, "sp": ["南部鉄器", "軍需工場の出力 +15%", {"mf": 0.15}]}], ["奥州の駿馬", {"sp": ["奥州の駿馬", "攻撃 +5%", {"atk": 0.05}]}], ["平泉の再興", {"stab": 10, "dev": 2}]],
-		[["北上川の舟運", {"infra": 3, "gold": 3000}], ["遠野の山民", {"sp": ["山の民", "防御 +8%・人口の伸び +5%", {"def": 0.08, "grow": 0.05}]}]]],
-	"宮城県": [["伊達の気風", "戦争支持 +10・攻撃 +3%", {"ws": 10, "atk": 0.03}],
-		[["仙台城下の整備", {"dev": 3, "cf": 1}], ["独眼竜の野望", {"ws": 10, "sp": ["独眼竜の遺風", "攻撃 +7%", {"atk": 0.07}]}], ["慶長の遣欧使節", {"gold": 5000, "pp": 20}]],
-		[["奥州の覇者", {"claim": 1, "ideo": ["gunsei", 15]}], ["石巻の米", {"sp": ["奥羽の米蔵", "食料 +20%", {"food": 0.20}]}]]],
-	"秋田県": [["秋田杉の美林", "建設費 -10%", {"build": -0.10}],
-		[["阿仁の鉱山", {"mf": 1, "gold": 4000}], ["院内銀山", {"sp": ["銀山の富", "ゴールド +12%", {"gold": 0.12}]}], ["佐竹の内政", {"stab": 10, "dev": 2}]],
-		[["雪国の守り", {"sp": ["雪国の守り", "防御 +10%", {"def": 0.10}]}], ["土崎の湊", {"cf": 1, "infra": 2}]]],
-	"山形県": [["最上川の舟運", "ゴールド +5%", {"gold": 0.05}],
-		[["紅花の商い", {"sp": ["紅花の商い", "ゴールド +10%", {"gold": 0.10}]}], ["最上義光の治世", {"stab": 10, "dev": 2}], ["出羽三山の信仰", {"sp": ["出羽三山", "安定度 +10・治安 +1/ターン", {"stab": 10, "sec": 1}]}]],
-		[["庄内の米", {"sp": ["庄内平野", "食料 +15%", {"food": 0.15}]}], ["羽州の兵", {"mf": 1, "ws": 10}]]],
-	"福島県": [["会津の士風", "防御 +5%・戦争支持 +5", {"def": 0.05, "ws": 5}],
-		[["日新館の教え", {"sp": ["什の掟", "攻撃 +5%・防御 +5%", {"atk": 0.05, "def": 0.05}]}], ["若松城の普請", {"sp": ["鶴ヶ城", "砦の防御 +20%", {"fort": 0.20}]}], ["奥州街道の要衝", {"infra": 3}]],
-		[["会津武士道", {"ideo": ["gunsei", 15], "sp": ["会津武士道", "防御 +10%", {"def": 0.10}]}], ["猪苗代の開墾", {"sp": ["安積の疏水", "食料 +15%・人口上限 +5%", {"food": 0.15, "pop": 0.05}]}]]],
-	"茨城県": [["水戸学", "政治力 +0.5/ターン", {"pp": 0.5}],
-		[["弘道館の開設", {"pp": 25, "stab": 5}], ["常陸の米", {"sp": ["常陸の田", "食料 +12%", {"food": 0.12}]}], ["霞ヶ浦の水運", {"cf": 1, "infra": 2}]],
-		[["尊王の旗", {"ws": 15, "ideo": ["gunsei", 10]}], ["偕楽園の治", {"stab": 10, "sp": ["民と偕に楽しむ", "人口の伸び +10%", {"grow": 0.10}]}]]],
-	"栃木県": [["日光の霊威", "安定度 +5", {"stab": 5}],
-		[["日光例幣使街道", {"infra": 3}], ["足尾の銅", {"mf": 1, "gold": 3000}], ["二荒山の加護", {"sp": ["二荒山の加護", "安定度 +5・防御 +5%", {"stab": 5, "def": 0.05}]}]],
-		[["宇都宮の宿", {"cf": 1, "dev": 2}], ["那須野の馬", {"sp": ["那須野が原", "攻撃 +5%", {"atk": 0.05}]}]]],
-	"群馬県": [["上州のからっ風", "人口の伸び -5%・戦争支持 +5", {"grow": -0.05, "ws": 5}],
-		[["富岡の製糸", {"cf": 2}], ["絹の道", {"sp": ["上州の生糸", "ゴールド +15%", {"gold": 0.15}]}], ["上州の侠客", {"ws": 10}]],
-		[["箕輪の剣", {"sp": ["新陰流", "攻撃 +7%", {"atk": 0.07}]}], ["草津の湯治", {"stab": 10, "sp": ["湯治場", "人口の伸び +10%", {"grow": 0.10}]}]]],
-	"埼玉県": [["武蔵野の原野", "食料 +5%", {"food": 0.05}],
-		[["中山道の宿場", {"infra": 3, "cf": 1}], ["川越の城下", {"dev": 3}], ["秩父の山", {"sp": ["秩父の守り", "防御 +8%", {"def": 0.08}]}]],
-		[["武蔵七党", {"ws": 10, "sp": ["坂東武者", "攻撃 +7%", {"atk": 0.07}]}], ["見沼の新田", {"sp": ["見沼の新田", "食料 +15%", {"food": 0.15}]}]]],
-	"千葉県": [["房総の海", "ゴールド +5%", {"gold": 0.05}],
-		[["利根川の水運", {"infra": 2, "cf": 1}], ["九十九里の網", {"sp": ["九十九里の漁", "食料 +15%", {"food": 0.15}]}], ["里見の水軍", {"sp": ["里見水軍", "防御 +7%", {"def": 0.07}]}]],
-		[["醤油の蔵", {"sp": ["野田と銚子の醸造", "ゴールド +12%", {"gold": 0.12}]}], ["佐倉の城", {"mf": 1, "sp": ["佐倉の兵", "攻撃 +5%", {"atk": 0.05}]}]]],
-	"東京都": [["大都の繁栄", "ゴールド +15%・安定度 -5", {"gold": 0.15, "stab": -5}],
-		[["江戸の町割り", {"dev": 4, "cf": 1}], ["天下普請", {"cf": 2, "sp": ["天下普請", "建設費 -15%", {"build": -0.15}]}], ["旗本八万騎", {"mf": 2, "sp": ["旗本八万騎", "兵の生産 +10%", {"troop": 0.10}]}]],
-		[["将軍の都", {"ideo": ["kunshu", 20], "stab": 15}], ["火消しと町人", {"ideo": ["gougi", 20], "sp": ["江戸っ子", "治安 +1/ターン・人口の伸び +10%", {"sec": 1, "grow": 0.10}]}]]],
-	"神奈川県": [["鎌倉の武家の古都", "戦争支持 +5", {"ws": 5}],
-		[["横浜の湊", {"cf": 2, "gold": 4000}], ["箱根の関所", {"sp": ["箱根の関", "防御 +10%・砦の防御 +10%", {"def": 0.10, "fort": 0.10}]}], ["小田原の評定", {"pp": 25}]],
-		[["鎌倉幕府の再興", {"ideo": ["gunsei", 20], "ws": 10}], ["開港の利", {"sp": ["開港の利", "ゴールド +15%", {"gold": 0.15}]}]]],
-	"新潟県": [["越後の米どころ", "食料 +20%", {"food": 0.20}],
-		[["越後の龍", {"sp": ["毘沙門天の旗", "攻撃 +8%", {"atk": 0.08}], "ws": 10}], ["佐渡の金山", {"gold": 8000, "sp": ["佐渡の金", "ゴールド +10%", {"gold": 0.10}]}], ["北前船の寄港地", {"cf": 1, "infra": 2}]],
-		[["義の戦", {"claim": 1}], ["信濃川の治水", {"sp": ["越後平野", "食料 +15%・人口上限 +5%", {"food": 0.15, "pop": 0.05}]}]]],
-	"富山県": [["越中の売薬", "ゴールド +5%・人口の伸び +5%", {"gold": 0.05, "grow": 0.05}],
-		[["置き薬の行商", {"sp": ["反魂丹", "ゴールド +10%", {"gold": 0.10}]}], ["立山の信仰", {"stab": 10}], ["神通川の治水", {"sp": ["砺波の散居", "食料 +12%", {"food": 0.12}]}]],
-		[["佐々成政の越え", {"ws": 10, "sp": ["さらさら越え", "攻撃 +5%", {"atk": 0.05}]}], ["高岡の鋳物", {"mf": 1, "cf": 1}]]],
-	"石川県": [["加賀百万石", "ゴールド +10%・食料 +5%", {"gold": 0.10, "food": 0.05}],
-		[["金沢の城下", {"dev": 3}], ["加賀の工芸", {"cf": 1, "sp": ["加賀の工芸", "民需工場の出力 +15%", {"cf": 0.15}]}], ["一向一揆の記憶", {"ideo": ["souson", 15]}]],
-		[["百万石の兵", {"mf": 2}], ["文治の国", {"ideo": ["gougi", 15], "stab": 10}]]],
-	"福井県": [["越前の朝倉", "安定度 +5", {"stab": 5}],
-		[["一乗谷の文化", {"pp": 20, "dev": 2}], ["越前の刃物", {"mf": 1, "sp": ["越前打刃物", "攻撃 +5%", {"atk": 0.05}]}], ["敦賀の湊", {"cf": 1, "gold": 3000}]],
-		[["永平寺の禅", {"sp": ["只管打坐", "安定度 +10", {"stab": 10}]}], ["金ヶ崎の殿", {"sp": ["金ヶ崎の退き口", "防御 +10%", {"def": 0.10}]}]]],
-	"山梨県": [["甲斐の山国", "防御 +5%・食料 -5%", {"def": 0.05, "food": -0.05}],
-		[["甲州金", {"gold": 6000, "sp": ["甲州金", "ゴールド +8%", {"gold": 0.08}]}], ["信玄堤", {"sp": ["信玄堤", "食料 +15%", {"food": 0.15}]}], ["人は城人は石垣", {"stab": 10, "sp": ["人は城", "防御 +8%", {"def": 0.08}]}]],
-		[["風林火山", {"ws": 15, "sp": ["甲州騎馬軍団", "攻撃 +10%", {"atk": 0.10}]}], ["甲州法度", {"pp": 30, "ideo": ["kunshu", 15]}]]],
-	"長野県": [["信濃の山岳", "防御 +10%・人口上限 -5%", {"def": 0.10, "pop": -0.05}],
-		[["真田の知略", {"sp": ["六文銭", "防御 +5%・砦の防御 +10%", {"def": 0.05, "fort": 0.10}]}], ["善光寺の門前", {"dev": 2, "stab": 5}], ["諏訪の御柱", {"sp": ["諏訪大社", "戦争支持 +5・安定度 +5", {"ws": 5, "stab": 5}]}]],
-		[["上田城の守り", {"sp": ["上田の籠城", "砦の防御 +20%", {"fort": 0.20}]}], ["木曽の檜", {"cf": 1, "sp": ["木曽の檜", "建設費 -10%", {"build": -0.10}]}]]],
-	"岐阜県": [["美濃を制する者は天下を制す", "戦争支持 +5・ゴールド +5%", {"ws": 5, "gold": 0.05}],
-		[["関の刃物", {"mf": 1, "sp": ["関の孫六", "攻撃 +7%", {"atk": 0.07}]}], ["楽市楽座", {"cf": 1, "sp": ["楽市楽座", "ゴールド +10%", {"gold": 0.10}]}], ["稲葉山の城", {"sp": ["岐阜城", "砦の防御 +15%", {"fort": 0.15}]}]],
-		[["天下布武", {"ideo": ["gunsei", 20], "claim": 1}], ["中山道の要", {"infra": 3, "cf": 1}]]],
-	"静岡県": [["駿河の富", "ゴールド +5%・食料 +5%", {"gold": 0.05, "food": 0.05}],
-		[["東海道の宿場", {"infra": 3, "cf": 1}], ["今川仮名目録", {"pp": 25, "stab": 5}], ["駿河の茶", {"sp": ["駿河の茶", "ゴールド +10%", {"gold": 0.10}]}]],
-		[["海道一の弓取り", {"sp": ["海道一の弓取り", "攻撃 +5%・兵の生産 +5%", {"atk": 0.05, "troop": 0.05}]}], ["大御所の隠居所", {"stab": 15, "ideo": ["kunshu", 15]}]]],
-	"愛知県": [["ものづくりの国", "軍需工場の出力 +10%・民需工場の出力 +10%", {"mf": 0.10, "cf": 0.10}],
-		[["三英傑の故郷", {"pp": 30, "ws": 5}], ["瀬戸の窯", {"cf": 1, "mf": 1}], ["名古屋の城下", {"dev": 3}]],
-		[["長篠の鉄砲隊", {"mf": 1, "sp": ["三段撃ち", "攻撃 +10%", {"atk": 0.10}]}], ["尾張の商人", {"sp": ["尾張の商い", "ゴールド +15%", {"gold": 0.15}]}]]],
-	"三重県": [["伊勢の神宮", "安定度 +10", {"stab": 10}],
-		[["お伊勢参り", {"sp": ["参宮の賑わい", "ゴールド +10%", {"gold": 0.10}]}], ["伊賀の忍び", {"sp": ["伊賀の忍び", "防御 +5%・攻撃 +5%", {"def": 0.05, "atk": 0.05}]}], ["桑名の湊", {"cf": 1}]],
-		[["伊賀惣国一揆", {"ideo": ["souson", 25], "sp": ["惣国一揆掟書", "防御 +10%", {"def": 0.10}]}], ["神宮の権威", {"stab": 10, "ideo": ["kunshu", 15]}]]],
-	"滋賀県": [["近江商人", "ゴールド +10%", {"gold": 0.10}],
-		[["三方よし", {"sp": ["三方よし", "ゴールド +8%・安定度 +5", {"gold": 0.08, "stab": 5}]}], ["国友の鉄砲鍛冶", {"mf": 2, "sp": ["国友鉄砲", "攻撃 +5%", {"atk": 0.05}]}], ["安土の城", {"dev": 2, "sp": ["安土城", "砦の防御 +10%", {"fort": 0.10}]}]],
-		[["琵琶湖の水運", {"cf": 1, "infra": 3}], ["比叡の僧兵", {"ws": 10, "sp": ["僧兵", "防御 +8%", {"def": 0.08}]}]]],
-	"京都府": [["都の権威", "安定度 +5・政治力 +0.5/ターン・戦争支持 -5", {"stab": 5, "pp": 0.5, "ws": -5}],
-		[["御所の修復", {"pp": 30, "stab": 5}], ["西陣の織物", {"cf": 2}], ["公家との縁", {"favor": 20}]],
-		[["上洛の号令", {"ideo": ["kunshu", 20], "claim": 1}], ["町衆の祇園会", {"ideo": ["gougi", 20], "sp": ["京の町衆", "ゴールド +10%・治安 +1/ターン", {"gold": 0.10, "sec": 1}]}]]],
-	"大阪府": [["天下の台所", "ゴールド +15%", {"gold": 0.15}],
-		[["堂島の米会所", {"sp": ["堂島米会所", "ゴールド +10%・食料 +5%", {"gold": 0.10, "food": 0.05}]}], ["堺の会合衆", {"cf": 2, "ideo": ["gougi", 15]}], ["大坂城の普請", {"sp": ["大坂城", "砦の防御 +20%", {"fort": 0.20}]}]],
-		[["堺の鉄砲", {"mf": 2}], ["石山の門徒", {"ideo": ["souson", 20], "sp": ["本願寺門徒", "防御 +8%・兵の生産 +5%", {"def": 0.08, "troop": 0.05}]}]]],
-	"兵庫県": [["播磨と但馬", "食料 +5%", {"food": 0.05}],
-		[["姫路の城", {"sp": ["白鷺城", "砦の防御 +15%", {"fort": 0.15}]}], ["兵庫津の湊", {"cf": 1, "gold": 4000}], ["生野の銀山", {"sp": ["生野銀山", "ゴールド +10%", {"gold": 0.10}]}]],
-		[["赤穂の塩", {"sp": ["赤穂の塩", "ゴールド +8%・食料 +5%", {"gold": 0.08, "food": 0.05}]}], ["播磨の兵", {"mf": 1, "ws": 10}]]],
-	"奈良県": [["古都の寺社", "安定度 +5・戦争支持 -5", {"stab": 5, "ws": -5}],
-		[["興福寺の衆徒", {"sp": ["衆徒", "防御 +8%", {"def": 0.08}]}], ["吉野の山", {"sp": ["吉野の守り", "防御 +5%・砦の防御 +10%", {"def": 0.05, "fort": 0.10}]}], ["大仏の再建", {"stab": 10, "pp": 20}]],
-		[["筒井の大和統一", {"claim": 1, "ws": 10}], ["奈良晒", {"cf": 1, "sp": ["奈良晒", "ゴールド +8%", {"gold": 0.08}]}]]],
-	"和歌山県": [["紀州の山と海", "防御 +5%", {"def": 0.05}],
-		[["雑賀衆の鉄砲", {"mf": 1, "sp": ["雑賀衆", "攻撃 +8%", {"atk": 0.08}]}], ["根来の僧兵", {"sp": ["根来衆", "防御 +7%", {"def": 0.07}]}], ["高野山の霊場", {"stab": 10}]],
-		[["紀州の傭兵", {"ideo": ["souson", 20], "ws": 10}], ["熊野詣", {"sp": ["熊野の道", "ゴールド +10%", {"gold": 0.10}]}]]],
-	"鳥取県": [["因幡の砂丘", "人口上限 -5%", {"pop": -0.05}],
-		[["因幡の湊", {"cf": 1}], ["渇え殺しの備え", {"sp": ["兵糧の備え", "食料 +15%・防御 +5%", {"food": 0.15, "def": 0.05}]}], ["大山の牧", {"sp": ["大山の牛馬", "兵の生産 +8%", {"troop": 0.08}]}]],
-		[["山陰の要", {"rm": "因幡の砂丘", "dev": 2}], ["鳥取の和紙", {"cf": 1, "gold": 3000}]]],
-	"島根県": [["出雲の神々", "安定度 +5", {"stab": 5}],
-		[["石見の銀山", {"gold": 8000, "sp": ["石見銀山", "ゴールド +15%", {"gold": 0.15}]}], ["たたら製鉄", {"mf": 2}], ["出雲大社の加護", {"stab": 10}]],
-		[["尼子の再興", {"ws": 15, "claim": 1}], ["隠岐の湊", {"cf": 1, "infra": 2}]]],
-	"岡山県": [["晴れの国", "食料 +10%", {"food": 0.10}],
-		[["備前長船", {"mf": 1, "sp": ["長船の刀", "攻撃 +7%", {"atk": 0.07}]}], ["児島の新田", {"sp": ["干拓地", "食料 +12%・人口上限 +5%", {"food": 0.12, "pop": 0.05}]}], ["岡山の城下", {"dev": 2, "cf": 1}]],
-		[["宇喜多の野心", {"ws": 15, "ideo": ["gunsei", 15]}], ["閑谷の学", {"pp": 25, "stab": 10}]]],
-	"広島県": [["安芸の水軍", "防御 +5%", {"def": 0.05}],
-		[["三本の矢", {"stab": 15, "sp": ["三本の矢", "防御 +5%・安定度 +5", {"def": 0.05, "stab": 5}]}], ["厳島の社", {"stab": 5, "pp": 15}], ["鞆の浦の湊", {"cf": 1, "gold": 3000}]],
-		[["厳島の奇襲", {"sp": ["厳島の戦", "攻撃 +10%", {"atk": 0.10}], "ws": 10}], ["吉田郡山の守り", {"sp": ["郡山城", "砦の防御 +15%", {"fort": 0.15}]}]]],
-	"山口県": [["西国の雄", "戦争支持 +5", {"ws": 5}],
-		[["大内の文化", {"cf": 1, "pp": 20}], ["松下村塾", {"sp": ["松下村塾", "政治力 +1/ターン", {"pp": 1.0}]}], ["奇兵隊", {"ideo": ["souson", 15], "sp": ["奇兵隊", "兵の生産 +10%・攻撃 +5%", {"troop": 0.10, "atk": 0.05}]}]],
-		[["長州の倒幕", {"ws": 15, "claim": 1}], ["下関の湊", {"cf": 1, "sp": ["関門の湊", "ゴールド +10%", {"gold": 0.10}]}]]],
-	"徳島県": [["阿波の藍", "ゴールド +8%", {"gold": 0.08}],
-		[["藍玉の商い", {"sp": ["阿波藍", "ゴールド +10%", {"gold": 0.10}]}], ["三好の上洛", {"ws": 10, "claim": 1}], ["鳴門の渦", {"sp": ["鳴門の守り", "防御 +8%", {"def": 0.08}]}]],
-		[["阿波踊り", {"stab": 10, "sp": ["踊る阿呆", "安定度 +5・人口の伸び +5%", {"stab": 5, "grow": 0.05}]}], ["阿波の水軍", {"mf": 1}]]],
-	"香川県": [["讃岐の溜池", "食料 +5%", {"food": 0.05}],
-		[["満濃池の改修", {"sp": ["満濃池", "食料 +15%", {"food": 0.15}]}], ["金比羅参り", {"sp": ["金毘羅宮", "ゴールド +10%", {"gold": 0.10}]}], ["塩飽の水夫", {"cf": 1}]],
-		[["讃岐の三白", {"sp": ["讃岐三白", "ゴールド +8%・食料 +5%", {"gold": 0.08, "food": 0.05}]}], ["高松の城", {"sp": ["玉藻城", "砦の防御 +15%", {"fort": 0.15}]}]]],
-	"愛媛県": [["伊予の水軍", "防御 +5%", {"def": 0.05}],
-		[["村上水軍", {"sp": ["村上水軍", "防御 +7%・攻撃 +3%", {"def": 0.07, "atk": 0.03}]}], ["道後の湯", {"stab": 10}], ["別子の銅", {"mf": 1, "gold": 4000}]],
-		[["瀬戸内の海賊", {"ws": 15, "ideo": ["gunsei", 10]}], ["伊予の蜜柑", {"sp": ["伊予の柑橘", "食料 +10%・ゴールド +5%", {"food": 0.10, "gold": 0.05}]}]]],
-	"高知県": [["土佐の山と海", "防御 +5%", {"def": 0.05}],
-		[["一領具足", {"sp": ["一領具足", "兵の生産 +10%", {"troop": 0.10}]}], ["土佐の材木", {"cf": 1}], ["鯨の海", {"sp": ["土佐の鯨", "食料 +10%", {"food": 0.10}]}]],
-		[["四国の統一", {"ws": 15, "claim": 1}], ["海援隊", {"ideo": ["gougi", 20], "sp": ["海援隊", "ゴールド +12%", {"gold": 0.12}]}]]],
-	"福岡県": [["博多の商人", "ゴールド +10%", {"gold": 0.10}],
-		[["大宰府の威光", {"stab": 10, "pp": 20}], ["博多の湊", {"cf": 2}], ["黒田の城", {"sp": ["福岡城", "砦の防御 +10%・防御 +5%", {"fort": 0.10, "def": 0.05}]}]],
-		[["筑前の兵", {"mf": 1, "ws": 10}], ["博多の豪商", {"ideo": ["gougi", 15], "sp": ["博多の豪商", "ゴールド +12%", {"gold": 0.12}]}]]],
-	"佐賀県": [["葉隠の武士道", "防御 +5%・戦争支持 +5", {"def": 0.05, "ws": 5}],
-		[["鍋島の統制", {"stab": 10}], ["有田の焼物", {"cf": 1, "sp": ["有田焼", "ゴールド +10%", {"gold": 0.10}]}], ["佐賀の反射炉", {"mf": 2, "sp": ["反射炉", "軍需工場の出力 +15%", {"mf": 0.15}]}]],
-		[["武士道とは死ぬことと見つけたり", {"ideo": ["gunsei", 15], "sp": ["死狂い", "攻撃 +10%", {"atk": 0.10}]}], ["唐津の湊", {"cf": 1, "gold": 3000}]]],
-	"長崎県": [["南蛮の窓口", "ゴールド +10%・軍需工場の出力 +5%", {"gold": 0.10, "mf": 0.05}],
-		[["南蛮貿易", {"sp": ["南蛮貿易", "ゴールド +12%", {"gold": 0.12}]}], ["出島の蘭学", {"pp": 25, "sp": ["蘭学", "建設費 -10%・民需工場の出力 +10%", {"build": -0.10, "cf": 0.10}]}], ["南蛮の鉄砲", {"mf": 1, "eq": 3000}]],
-		[["キリシタンの結束", {"ideo": ["souson", 20], "sp": ["島原の信仰", "防御 +10%", {"def": 0.10}]}], ["対馬と壱岐の守り", {"sp": ["防人の島", "防御 +8%", {"def": 0.08}]}]]],
-	"熊本県": [["肥後もっこす", "戦争支持 +5・安定度 -5", {"ws": 5, "stab": -5}],
-		[["清正の築城", {"sp": ["武者返し", "砦の防御 +25%", {"fort": 0.25}]}], ["阿蘇の大地", {"sp": ["阿蘇の牧", "食料 +10%・兵の生産 +5%", {"food": 0.10, "troop": 0.05}]}], ["菊池の一族", {"ws": 10}]],
-		[["肥後の統一", {"rm": "肥後もっこす", "stab": 10, "claim": 1}], ["天草の湊", {"cf": 1, "gold": 3000}]]],
-	"大分県": [["豊後の大友", "ゴールド +5%", {"gold": 0.05}],
-		[["府内の南蛮", {"sp": ["府内の賑わい", "ゴールド +10%", {"gold": 0.10}]}], ["国崩し", {"mf": 1, "sp": ["国崩し", "攻撃 +7%", {"atk": 0.07}]}], ["別府の湯", {"stab": 10}]],
-		[["九州探題", {"claim": 1, "ideo": ["kunshu", 15]}], ["キリシタン大名", {"ideo": ["gougi", 15], "gold": 6000}]]],
-	"宮崎県": [["日向の神話", "安定度 +5", {"stab": 5}],
-		[["高千穂の祈り", {"stab": 10}], ["飫肥の杉", {"cf": 1, "sp": ["飫肥杉", "建設費 -10%", {"build": -0.10}]}], ["日向の駒", {"sp": ["日向の駒", "攻撃 +5%", {"atk": 0.05}]}]],
-		[["伊東の再起", {"ws": 15, "claim": 1}], ["日向灘の漁", {"sp": ["日向灘", "食料 +12%", {"food": 0.12}]}]]],
-	"鹿児島県": [["薩摩隼人", "攻撃 +5%・戦争支持 +10", {"atk": 0.05, "ws": 10}],
-		[["郷中教育", {"sp": ["郷中教育", "攻撃 +5%・防御 +5%", {"atk": 0.05, "def": 0.05}]}], ["示現流", {"sp": ["チェスト", "攻撃 +8%", {"atk": 0.08}]}], ["集成館事業", {"mf": 2, "cf": 1}]],
-		[["島津の九州統一", {"ws": 15, "claim": 1, "ideo": ["gunsei", 15]}], ["琉球との交易", {"sp": ["琉球口", "ゴールド +12%", {"gold": 0.12}]}]]],
-	"沖縄県": [["琉球王国", "安定度 +10・戦争支持 -10・ゴールド +5%", {"stab": 10, "ws": -10, "gold": 0.05}],
-		[["中継貿易", {"sp": ["万国津梁", "ゴールド +15%", {"gold": 0.15}]}], ["首里の城", {"sp": ["首里城", "砦の防御 +15%", {"fort": 0.15}]}], ["琉球の空手", {"sp": ["手（ティー）", "防御 +8%", {"def": 0.08}]}]],
-		[["守礼の邦", {"ideo": ["kunshu", 20], "stab": 10}], ["海の王国", {"cf": 2}]]],
+## 大国の固有ツリー（x・y は固有の枝の中での位置）
+const TREE_GER := [
+	{"id": "g1", "n": "ヴェルサイユ体制の破棄", "x": 2, "y": 0, "t": 5, "req": [], "e": {"ws": 10, "ideo": ["fascism", 25]}},
+	{"id": "g2", "n": "全権委任法", "w": 5.0, "x": 1, "y": 1, "t": 6, "req": ["g1"], "ex": ["g2b", "g2c"], "e": {"gov": "fascism", "stab": 10}},
+	{"id": "g2b", "n": "共和国の堅持", "x": 3, "y": 1, "t": 6, "req": ["g1"], "ex": ["g2", "g2c"], "e": {"ideo": ["democracy", 25], "stab": 15}},
+	{"id": "g2c", "n": "労働者の蜂起", "x": 4, "y": 1, "t": 6, "req": ["g1"], "ex": ["g2", "g2b"], "e": {"gov": "communism", "stab": -10}},
+	{"id": "g3", "n": "再軍備宣言", "x": 0, "y": 2, "t": 7, "req": ["g2"], "e": {"rm": "ヴェルサイユの軛", "mf": 2, "sp": ["再軍備", "兵の生産 +25%・軍需工場の出力 +15%", {"troop": 0.25, "mf": 0.15}]}},
+	{"id": "g4", "n": "ラインラント進駐", "x": 1, "y": 2, "t": 5, "req": ["g2"], "e": {"ws": 15, "stab": 5, "sp": ["電撃戦ドクトリン", "攻撃 +10%", {"atk": 0.10}]}},
+	{"id": "g5", "n": "アンシュルス", "x": 0, "y": 3, "t": 6, "req": ["g3"], "e": {"demand": ["新潟県"]}},
+	{"id": "g6", "n": "枢軸の結成", "x": 1, "y": 3, "t": 6, "req": ["g4"], "e": {"fac": "枢軸", "ws": 5}},
+	{"id": "g7", "n": "ズデーテン問題", "x": 0, "y": 4, "t": 6, "req": ["g5"], "e": {"demand": ["栃木県"]}},
+	{"id": "g8", "n": "四か年計画", "x": 1, "y": 4, "t": 7, "req": ["g6"], "e": {"mf": 2, "cf": 1}},
+	{"id": "g9", "n": "ダンツィヒか戦争か", "x": 0, "y": 5, "t": 6, "req": ["g7"], "e": {"warOn": "福島県", "ws": 10}},
+	{"id": "g10", "n": "独ソ不可侵条約", "x": 1, "y": 5, "t": 5, "req": ["g8"], "ex": ["g11"], "e": {"pact": "北海道", "ws": 5}},
+	{"id": "g11", "n": "東方への拡張", "x": 2, "y": 5, "t": 7, "req": ["g8"], "ex": ["g10"], "e": {"claimOn": ["北海道"], "sp": ["東方拡張", "攻撃 +5%", {"atk": 0.05}]}},
+	{"id": "g12", "n": "西方への進撃", "x": 0, "y": 6, "t": 7, "req": ["g9"], "e": {"claimOn": ["長野県", "埼玉県", "千葉県"], "ws": 10}},
+	{"id": "g13", "n": "社会民主党との連立", "x": 3, "y": 2, "t": 6, "req": ["g2b"], "e": {"cf": 2, "stab": 10}},
+	{"id": "g14", "n": "国際連盟への復帰", "x": 3, "y": 3, "t": 6, "req": ["g13"], "e": {"favor": 20, "joinFac": "連合国"}},
+	{"id": "g15", "n": "赤色戦線", "x": 4, "y": 2, "t": 6, "req": ["g2c"], "e": {"sp": ["赤色戦線", "兵の生産 +10%・軍需工場の出力 +5%", {"troop": 0.10, "mf": 0.05}], "ws": 10}},
+	{"id": "g16", "n": "独ソ同盟", "x": 4, "y": 3, "t": 6, "req": ["g15"], "e": {"joinFac": "コミンテルン"}},
+]
+const TREE_SOV := [
+	{"id": "s1", "n": "第二次五か年計画", "x": 1, "y": 0, "t": 5, "req": [], "e": {"mf": 1, "cf": 1, "pp": 10}},
+	{"id": "s2", "n": "重工業の拡張", "x": 0, "y": 1, "t": 6, "req": ["s1"], "e": {"mf": 2}},
+	{"id": "s3", "n": "大粛清", "x": 2, "y": 1, "t": 6, "req": ["s1"], "ex": ["s3b"], "e": {"stab": 15, "ideo": ["communism", 20]}},
+	{"id": "s3b", "n": "粛清の中止", "x": 3, "y": 1, "t": 6, "req": ["s1"], "ex": ["s3"], "e": {"rm": "大粛清の影", "stab": -5}},
+	{"id": "s4", "n": "寒地農法の確立", "x": 0, "y": 2, "t": 8, "req": ["s2"], "e": {"rm": "広大な凍土", "sp": ["寒地の暮らし", "人口上限 -15%・食料 -10%・ゴールド -10%", {"pop": -0.15, "food": -0.1, "gold": -0.10}]}},
+	{"id": "s5", "n": "赤軍の再建", "x": 2, "y": 2, "t": 7, "req": ["s3", "s3b"], "e": {"rm": "大粛清の影", "sp": ["赤軍", "防御 +10%・兵の生産 +5%", {"def": 0.10, "troop": 0.05}]}},
+	{"id": "s6", "n": "コミンテルンの指導", "x": 3, "y": 2, "t": 6, "req": ["s3", "s3b"], "e": {"fac": "コミンテルン", "invite": ["鳥取県", "岡山県"]}},
+	{"id": "s7", "n": "冬戦争", "x": 1, "y": 3, "t": 6, "req": ["s5"], "e": {"warOn": "青森県"}},
+	{"id": "s8", "n": "バルト三国の保護", "x": 2, "y": 3, "t": 6, "req": ["s5"], "e": {"demand": ["岩手県", "宮城県", "山形県"]}},
+	{"id": "s9", "n": "世界革命", "x": 3, "y": 3, "t": 7, "req": ["s6"], "ex": ["s10"], "e": {"sp": ["世界革命", "戦争支持 +15", {"ws": 15.0}], "claimOn": ["福島県"]}},
+	{"id": "s10", "n": "一国社会主義", "x": 4, "y": 3, "t": 7, "req": ["s6"], "ex": ["s9"], "e": {"sp": ["一国社会主義", "安定度 +10・防御 +5%", {"stab": 10.0, "def": 0.05}], "cf": 2}},
+	{"id": "s11", "n": "大祖国の盾", "x": 1, "y": 4, "t": 7, "req": ["s7", "s8"], "e": {"sp": ["祖国の盾", "砦の防御 +20%・防御 +5%", {"fort": 0.20, "def": 0.05}]}},
+]
+const TREE_UK := [
+	{"id": "b1", "n": "帝国国防委員会", "x": 1, "y": 0, "t": 5, "req": [], "e": {"mf": 1}},
+	{"id": "b2", "n": "宥和政策", "x": 0, "y": 1, "t": 5, "req": ["b1"], "ex": ["b3"], "e": {"stab": 10, "favor": 10}},
+	{"id": "b4", "n": "影の工場", "x": 1, "y": 1, "t": 6, "req": ["b1"], "e": {"mf": 1, "cf": 1}},
+	{"id": "b3", "n": "対独強硬", "x": 2, "y": 1, "t": 5, "req": ["b1"], "ex": ["b2"], "e": {"rm": "宥和の空気", "ws": 15}},
+	{"id": "b5", "n": "連合国の結成", "x": 0, "y": 2, "t": 6, "req": ["b4"], "e": {"fac": "連合国", "invite": ["神奈川県", "徳島県", "香川県", "愛媛県", "高知県"], "pp": 20}},
+	{"id": "b6", "n": "海軍の拡張", "x": 1, "y": 2, "t": 7, "req": ["b4"], "e": {"sp": ["ロイヤル・ネイビー", "防御 +8%", {"def": 0.08}]}},
+	{"id": "b7", "n": "ポーランドへの保証", "x": 2, "y": 2, "t": 5, "req": ["b3"], "e": {"guar": ["福島県", "富山県", "福井県"]}},
+	{"id": "b8", "n": "民主主義の工場", "x": 1, "y": 3, "t": 7, "req": ["b5", "b6"], "e": {"mf": 2, "ws": 10}},
+	{"id": "b9", "n": "決して降伏しない", "x": 2, "y": 3, "t": 6, "req": ["b7"], "e": {"sp": ["不屈", "防御 +10%・安定度 +10", {"def": 0.10, "stab": 10.0}]}},
+]
+const TREE_FRA := [
+	{"id": "f1", "n": "人民戦線の行方", "x": 1, "y": 0, "t": 5, "req": [], "e": {"pp": 10}},
+	{"id": "f2", "n": "人民戦線政府", "x": 0, "y": 1, "t": 6, "req": ["f1"], "ex": ["f3"], "e": {"ideo": ["communism", 20], "cf": 2}},
+	{"id": "f4", "n": "マジノ線の延長", "x": 1, "y": 1, "t": 7, "req": ["f1"], "e": {"sp": ["マジノ線の延長", "砦の防御 +15%", {"fort": 0.15}]}},
+	{"id": "f3", "n": "国民連合", "x": 2, "y": 1, "t": 6, "req": ["f1"], "ex": ["f2"], "e": {"rm": "政治の混迷", "stab": 10}},
+	{"id": "f5", "n": "英仏協商", "x": 0, "y": 2, "t": 5, "req": ["f2", "f3"], "e": {"joinFac": "連合国"}},
+	{"id": "f6", "n": "軍需の国有化", "x": 1, "y": 2, "t": 6, "req": ["f4"], "e": {"mf": 2}},
+	{"id": "f7", "n": "小協商の再建", "x": 2, "y": 2, "t": 6, "req": ["f3"], "e": {"guar": ["栃木県", "静岡県"], "favor": 10}},
+	{"id": "f8", "n": "共和国の防衛", "x": 1, "y": 3, "t": 6, "req": ["f5", "f6"], "e": {"sp": ["共和国の防衛", "防御 +8%・戦争支持 +10", {"def": 0.08, "ws": 10.0}]}},
+]
+const TREE_ITA := [
+	{"id": "i1", "n": "新ローマ帝国", "x": 1, "y": 0, "t": 5, "req": [], "e": {"ws": 10, "ideo": ["fascism", 10]}},
+	{"id": "i2", "n": "アルバニア保護", "x": 0, "y": 1, "t": 5, "req": ["i1"], "e": {"demand": ["三重県"]}},
+	{"id": "i4", "n": "鋼鉄協約", "x": 1, "y": 1, "t": 5, "req": ["i1"], "ex": ["i8"], "e": {"joinFac": "枢軸"}},
+	{"id": "i3", "n": "工業の振興", "x": 2, "y": 1, "t": 6, "req": ["i1"], "e": {"rm": "貧弱な工業", "mf": 1, "cf": 1}},
+	{"id": "i5", "n": "われらの海", "x": 0, "y": 2, "t": 6, "req": ["i2"], "e": {"claimOn": ["福井県", "静岡県"], "ws": 10}},
+	{"id": "i6", "n": "エチオピア征服", "x": 2, "y": 2, "t": 7, "req": ["i3"], "e": {"claimOn": ["宮崎県"], "sp": ["帝国の兵", "攻撃 +5%", {"atk": 0.05}]}},
+	{"id": "i7", "n": "バルカンへの進出", "x": 0, "y": 3, "t": 6, "req": ["i5"], "e": {"warOn": "静岡県"}},
+	{"id": "i8", "n": "王党派の復権", "x": 2, "y": 3, "t": 6, "req": ["i6"], "ex": ["i4"], "e": {"gov": "neutral", "rm": "ローマの夢", "stab": 15}},
+]
+const TREE_USA := [
+	{"id": "a1", "n": "ニューディール", "x": 1, "y": 0, "t": 5, "req": [], "e": {"cf": 2}},
+	{"id": "a2", "n": "大恐慌の克服", "x": 0, "y": 1, "t": 6, "req": ["a1"], "e": {"rm": "大恐慌", "cf": 1}},
+	{"id": "a3", "n": "中立法の見直し", "x": 2, "y": 1, "t": 6, "req": ["a1"], "e": {"ws": 10}},
+	{"id": "a4", "n": "民主主義の兵器廠", "x": 1, "y": 2, "t": 7, "req": ["a2", "a3"], "e": {"mf": 3}},
+	{"id": "a5", "n": "武器貸与法", "x": 2, "y": 2, "t": 6, "req": ["a3"], "e": {"rm": "孤立主義", "favor": 15}},
+	{"id": "a7", "n": "アメリカ第一", "x": 0, "y": 3, "t": 6, "req": ["a2"], "ex": ["a6"], "e": {"sp": ["アメリカ第一", "安定度 +10・ゴールド +10%", {"stab": 10.0, "gold": 0.10}]}},
+	{"id": "a8", "n": "合衆国の産業力", "x": 1, "y": 3, "t": 7, "req": ["a4"], "e": {"sp": ["大量生産", "軍需工場の出力 +20%・民需工場の出力 +10%", {"mf": 0.20, "cf": 0.10}]}},
+	{"id": "a6", "n": "連合国への参加", "x": 2, "y": 3, "t": 6, "req": ["a5"], "ex": ["a7"], "e": {"joinFac": "連合国", "ws": 15}},
+]
+const TREE_JPN := [
+	{"id": "j1", "n": "軍部の台頭", "x": 1, "y": 0, "t": 5, "req": [], "e": {"ideo": ["fascism", 20], "ws": 10}},
+	{"id": "j2", "n": "統制派の勝利", "w": 2.5, "x": 0, "y": 1, "t": 6, "req": ["j1"], "ex": ["j3"], "e": {"gov": "fascism", "stab": 10}},
+	{"id": "j3", "n": "協調外交", "x": 2, "y": 1, "t": 6, "req": ["j1"], "ex": ["j2"], "e": {"ideo": ["democracy", 25], "rm": "軍部の専横", "stab": 10}},
+	{"id": "j4", "n": "日独防共協定", "x": 0, "y": 2, "t": 5, "req": ["j2"], "e": {"joinFac": "枢軸"}},
+	{"id": "j5", "n": "大陸進出", "x": 1, "y": 2, "t": 6, "req": ["j2"], "e": {"claimOn": ["島根県", "広島県"], "ws": 10}},
+	{"id": "j9", "n": "民政の安定", "x": 2, "y": 2, "t": 6, "req": ["j3"], "e": {"cf": 2, "sp": ["民政", "ゴールド +10%", {"gold": 0.10}]}},
+	{"id": "j7", "n": "南方進出", "x": 0, "y": 3, "t": 7, "req": ["j4"], "e": {"claimOn": ["長崎県", "佐賀県"]}},
+	{"id": "j6", "n": "満洲の開発", "x": 1, "y": 3, "t": 6, "req": ["j5"], "e": {"demand": ["島根県"], "mf": 1}},
+	{"id": "j8", "n": "国家総動員法", "x": 1, "y": 4, "t": 7, "req": ["j6"], "e": {"sp": ["国家総動員", "兵の生産 +15%・軍需工場の出力 +10%", {"troop": 0.15, "mf": 0.10}]}},
+]
+const TREE_CHN := [
+	{"id": "c1", "n": "国家統一", "x": 1, "y": 0, "t": 5, "req": [], "e": {"pp": 15}},
+	{"id": "c2", "n": "国共合作", "x": 0, "y": 1, "t": 6, "req": ["c1"], "ex": ["c3"], "e": {"favor": 20, "ideo": ["communism", 10], "sp": ["抗日統一戦線", "防御 +10%", {"def": 0.10}]}},
+	{"id": "c4", "n": "軍閥の統合", "x": 1, "y": 1, "t": 6, "req": ["c1"], "e": {"demand": ["山口県"], "rm": "軍閥の割拠"}},
+	{"id": "c3", "n": "剿共", "x": 2, "y": 1, "t": 6, "req": ["c1"], "ex": ["c2"], "e": {"claimOn": ["岡山県"], "ws": 10}},
+	{"id": "c6", "n": "持久戦", "x": 0, "y": 2, "t": 6, "req": ["c2"], "e": {"sp": ["持久戦", "砦の防御 +20%", {"fort": 0.20}]}},
+	{"id": "c5", "n": "軍事顧問団の招聘", "x": 1, "y": 2, "t": 7, "req": ["c4"], "e": {"sp": ["近代化された師団", "攻撃 +5%・防御 +5%", {"atk": 0.05, "def": 0.05}], "mf": 1}},
+	{"id": "c7", "n": "連合国への接近", "x": 2, "y": 2, "t": 6, "req": ["c5"], "e": {"joinFac": "連合国"}},
+]
+const TREE_SPA := [
+	{"id": "e1", "n": "内戦の行方", "x": 1, "y": 0, "t": 4, "req": [], "e": {"ws": 10}},
+	{"id": "e2", "n": "共和派の勝利", "x": 0, "y": 1, "t": 7, "req": ["e1"], "ex": ["e3", "e4"], "e": {"rm": "内戦", "stab": 10, "ideo": ["democracy", 25]}},
+	{"id": "e3", "n": "国民派の勝利", "w": 2.0, "x": 1, "y": 1, "t": 7, "req": ["e1"], "ex": ["e2", "e4"], "e": {"rm": "内戦", "gov": "fascism"}},
+	{"id": "e4", "n": "人民の戦い", "x": 2, "y": 1, "t": 7, "req": ["e1"], "ex": ["e2", "e3"], "e": {"rm": "内戦", "gov": "communism"}},
+	{"id": "e6", "n": "戦後の復興", "x": 0, "y": 2, "t": 6, "req": ["e2", "e4"], "e": {"cf": 2, "mf": 1}},
+	{"id": "e5", "n": "イベリアの統一", "x": 1, "y": 2, "t": 6, "req": ["e3"], "e": {"claimOn": ["滋賀県"], "joinFac": "枢軸"}},
+]
+
+## 県ごとの見立て：r=国 ideo=最初の政権 pop=思想の支持（与党以外） stab=安定度の補正 sp=最初の国民精神
+## tree=大国の固有ツリー／chain=3段の固有方針 fin=最後の2択
+const COUNTRY := {
+	"北海道": {"r": "ソ連", "ideo": "communism", "pop": {"fascism": 3, "democracy": 5, "neutral": 7}, "tree": TREE_SOV,
+		"sp": [["広大な凍土", "人口上限 -20%・食料 -25%・兵の生産 -10%・ゴールド -15%", {"pop": -0.2, "food": -0.25, "troop": -0.1, "gold": -0.15}], ["大粛清の影", "攻撃 -10%・安定度 -10", {"atk": -0.10, "stab": -10.0}]]},
+	"群馬県": {"r": "ドイツ", "ideo": "democracy", "pop": {"fascism": 42, "communism": 12, "neutral": 8}, "stab": -12, "tree": TREE_GER,
+		"sp": [["列強", "ゴールド +15%・兵の生産 +15%・軍需工場の出力 +10%", {"gold": 0.15, "troop": 0.15, "mf": 0.10}], ["プロイセンの伝統", "攻撃 +10%・防御 +5%", {"atk": 0.10, "def": 0.05}], ["ヴェルサイユの軛", "兵の生産 -15%・軍需工場の出力 -10%", {"troop": -0.15, "mf": -0.10}], ["恐慌の傷跡", "安定度 -5・ゴールド -5%", {"stab": -5.0, "gold": -0.05}]]},
+	"東京都": {"r": "イギリス", "ideo": "democracy", "pop": {"fascism": 4, "communism": 6, "neutral": 10}, "tree": TREE_UK,
+		"sp": [["列強", "ゴールド +15%・兵の生産 +15%・軍需工場の出力 +10%", {"gold": 0.15, "troop": 0.15, "mf": 0.10}], ["大英帝国", "ゴールド +10%", {"gold": 0.10}], ["宥和の空気", "戦争支持 -10", {"ws": -10.0}]]},
+	"長野県": {"r": "フランス", "ideo": "democracy", "pop": {"fascism": 8, "communism": 18, "neutral": 8}, "tree": TREE_FRA,
+		"sp": [["列強", "ゴールド +15%・兵の生産 +15%・軍需工場の出力 +10%", {"gold": 0.15, "troop": 0.15, "mf": 0.10}], ["政治の混迷", "安定度 -10", {"stab": -10.0}], ["マジノ線", "砦の防御 +20%", {"fort": 0.20}]]},
+	"愛知県": {"r": "イタリア", "ideo": "fascism", "pop": {"democracy": 6, "communism": 6, "neutral": 15}, "tree": TREE_ITA,
+		"sp": [["列強", "ゴールド +15%・兵の生産 +15%・軍需工場の出力 +10%", {"gold": 0.15, "troop": 0.15, "mf": 0.10}], ["ローマの夢", "戦争支持 +10", {"ws": 10.0}], ["貧弱な工業", "軍需工場の出力 -15%", {"mf": -0.15}]]},
+	"大阪府": {"r": "アメリカ", "ideo": "democracy", "pop": {"fascism": 4, "communism": 4, "neutral": 6}, "tree": TREE_USA,
+		"sp": [["列強", "ゴールド +15%・兵の生産 +15%・軍需工場の出力 +10%", {"gold": 0.15, "troop": 0.15, "mf": 0.10}], ["孤立主義", "戦争支持 -20", {"ws": -20.0}], ["大恐慌", "ゴールド -15%・安定度 -10", {"gold": -0.15, "stab": -10.0}]]},
+	"福岡県": {"r": "日本", "ideo": "neutral", "pop": {"fascism": 35, "democracy": 12, "communism": 3}, "tree": TREE_JPN,
+		"sp": [["列強", "ゴールド +15%・兵の生産 +15%・軍需工場の出力 +10%", {"gold": 0.15, "troop": 0.15, "mf": 0.10}], ["軍部の専横", "戦争支持 +10・安定度 -5", {"ws": 10.0, "stab": -5.0}]]},
+	"広島県": {"r": "中華民国", "ideo": "neutral", "pop": {"communism": 18, "democracy": 10, "fascism": 6}, "tree": TREE_CHN,
+		"sp": [["軍閥の割拠", "安定度 -10・ゴールド -10%", {"stab": -10.0, "gold": -0.10}]]},
+	"京都府": {"r": "スペイン", "ideo": "democracy", "pop": {"fascism": 28, "communism": 24, "neutral": 6}, "stab": -10, "tree": TREE_SPA,
+		"sp": [["内戦", "安定度 -20・ゴールド -20%・兵の生産 -10%", {"stab": -20.0, "gold": -0.20, "troop": -0.10}]]},
+	"青森県": {"r": "フィンランド", "ideo": "democracy", "pop": {"fascism": 8, "neutral": 10}, "sp": [["シス（不屈）", "防御 +10%", {"def": 0.10}]],
+		"chain": [["マンネルヘイム線", {"sp": ["マンネルヘイム線", "砦の防御 +20%", {"fort": 0.20}]}], ["白衛軍の伝統", {"ws": 10}], ["北欧との協調", {"favor": 15}]],
+		"fin": [["連合国への接近", {"joinFac": "連合国"}], ["継続戦争の備え", {"joinFac": "枢軸", "claimOn": ["北海道"]}]]},
+	"秋田県": {"r": "スウェーデン", "ideo": "democracy", "pop": {"neutral": 8, "communism": 5}, "sp": [["武装中立", "防御 +5%・ゴールド +5%", {"def": 0.05, "gold": 0.05}]],
+		"chain": [["鉄鉱石の輸出", {"cf": 1, "gold": 3000}], ["ボフォースの工場", {"mf": 1}], ["北欧防衛同盟", {"favor": 15}]],
+		"fin": [["永世の中立", {"sp": ["中立の伝統", "安定度 +10", {"stab": 10.0}]}], ["北欧の盾", {"fac": "北欧同盟", "invite": ["青森県", "茨城県"]}]]},
+	"岩手県": {"r": "エストニア", "ideo": "neutral", "pop": {"democracy": 15, "communism": 8}, "sp": [["小国の悲哀", "戦争支持 -10", {"ws": -10.0}]],
+		"chain": [["国防同盟", {"sp": ["国防同盟", "防御 +5%", {"def": 0.05}]}], ["バルト協商", {"favor": 20}], ["港湾の整備", {"cf": 1}]],
+		"fin": [["ソ連への接近", {"ideo": ["communism", 25]}], ["フィンランドとの連帯", {"joinFac": "連合国"}]]},
+	"宮城県": {"r": "ラトビア", "ideo": "neutral", "pop": {"democracy": 12, "communism": 8}, "sp": [["権威主義の安定", "安定度 +10", {"stab": 10.0}]],
+		"chain": [["体制の固め", {"stab": 10}], ["農業の近代化", {"sp": ["農業の近代化", "食料 +10%", {"food": 0.10}]}], ["リガの港", {"cf": 1}]],
+		"fin": [["バルト協商の強化", {"sp": ["バルト協商", "防御 +8%", {"def": 0.08}]}], ["ドイツへの接近", {"ideo": ["fascism", 25]}]]},
+	"山形県": {"r": "リトアニア", "ideo": "neutral", "pop": {"democracy": 12, "fascism": 8}, "sp": [["ヴィリニュス問題", "戦争支持 +5", {"ws": 5.0}]],
+		"chain": [["国境の防備", {"sp": ["国境の防備", "砦の防御 +15%", {"fort": 0.15}]}], ["農業協同組合", {"sp": ["協同組合", "人口の伸び +10%", {"grow": 0.10}]}], ["バルトの連帯", {"favor": 15}]],
+		"fin": [["ヴィリニュス奪還", {"claimOn": ["福島県"], "ws": 15}], ["中立の宣言", {"stab": 15}]]},
+	"福島県": {"r": "ポーランド", "ideo": "neutral", "pop": {"democracy": 15, "fascism": 8, "communism": 5}, "sp": [["二大国の狭間", "戦争支持 +10・安定度 -5", {"ws": 10.0, "stab": -5.0}]],
+		"chain": [["中央工業地域", {"mf": 1, "cf": 1}], ["ルーマニアとの同盟", {"favor": 15}], ["騎兵の伝統", {"sp": ["ウーラン騎兵", "攻撃 +5%", {"atk": 0.05}]}]],
+		"fin": [["インテルマリウム", {"fac": "インテルマリウム", "invite": ["山形県", "宮城県", "岩手県", "富山県"]}], ["連合国への加盟", {"joinFac": "連合国"}]]},
+	"茨城県": {"r": "デンマーク", "ideo": "democracy", "pop": {"fascism": 5, "neutral": 6}, "sp": [["非武装の伝統", "兵の生産 -10%・ゴールド +10%", {"troop": -0.10, "gold": 0.10}]],
+		"chain": [["酪農の国", {"sp": ["酪農の国", "食料 +15%", {"food": 0.15}]}], ["コペンハーゲンの港", {"cf": 1}], ["国防の見直し", {"rm": "非武装の伝統"}]],
+		"fin": [["北欧の協調", {"favor": 15, "stab": 10}], ["連合国への加盟", {"joinFac": "連合国"}]]},
+	"栃木県": {"r": "チェコスロバキア", "ideo": "democracy", "pop": {"fascism": 10, "communism": 10, "neutral": 8}, "sp": [["シュコダ工場", "軍需工場の出力 +20%", {"mf": 0.20}]],
+		"chain": [["国境要塞群", {"sp": ["国境要塞群", "砦の防御 +25%", {"fort": 0.25}]}], ["小協商", {"favor": 15}], ["兵器の輸出", {"mf": 1, "gold": 3000}]],
+		"fin": [["徹底抗戦", {"sp": ["徹底抗戦", "防御 +10%", {"def": 0.10}], "ws": 15}], ["スロバキアの自治", {"stab": 10, "ideo": ["neutral", 20]}]]},
+	"埼玉県": {"r": "ベルギー", "ideo": "democracy", "pop": {"fascism": 8, "neutral": 8}, "sp": [["中立の誓い", "戦争支持 -10", {"ws": -10.0}]],
+		"chain": [["運河の要塞", {"sp": ["運河の要塞", "砦の防御 +20%", {"fort": 0.20}]}], ["コンゴの資源", {"gold": 4000, "cf": 1}], ["再武装", {"mf": 1, "rm": "中立の誓い"}]],
+		"fin": [["フランスとの同盟", {"joinFac": "連合国"}], ["厳正中立", {"stab": 15}]]},
+	"千葉県": {"r": "オランダ", "ideo": "democracy", "pop": {"fascism": 5, "neutral": 6}, "sp": [["東インドの富", "ゴールド +10%", {"gold": 0.10}]],
+		"chain": [["水の防衛線", {"sp": ["水の防衛線", "砦の防御 +20%・防御 +5%", {"fort": 0.20, "def": 0.05}]}], ["電機の工場", {"cf": 1}], ["海運の国", {"gold": 4000}]],
+		"fin": [["東インドの防衛", {"guar": ["長崎県"]}], ["連合国への加盟", {"joinFac": "連合国"}]]},
+	"神奈川県": {"r": "カナダ", "ideo": "democracy", "pop": {"neutral": 5, "communism": 4}, "sp": [["自治領", "戦争支持 -5", {"ws": -5.0}]],
+		"chain": [["穀倉地帯", {"sp": ["穀倉地帯", "食料 +10%", {"food": 0.10}]}], ["工業の動員", {"mf": 1, "cf": 1}], ["英連邦への忠誠", {"joinFac": "連合国"}]],
+		"fin": [["大西洋の橋", {"sp": ["大西洋の橋", "ゴールド +5%・軍需工場の出力 +10%", {"gold": 0.05, "mf": 0.10}]}], ["独自の外交", {"stab": 10, "favor": 10}]]},
+	"新潟県": {"r": "オーストリア", "ideo": "neutral", "pop": {"fascism": 25, "democracy": 10, "communism": 6}, "sp": [["祖国戦線", "安定度 -5", {"stab": -5.0}]],
+		"chain": [["オーストリアの独立", {"stab": 10}], ["イタリアとの友好", {"favor": 15}], ["帝国の記憶", {"ideo": ["neutral", 15]}]],
+		"fin": [["合邦への道", {"ideo": ["fascism", 30]}], ["独立の堅持", {"sp": ["独立の堅持", "防御 +8%", {"def": 0.08}], "ws": 10}]]},
+	"富山県": {"r": "ルーマニア", "ideo": "neutral", "pop": {"fascism": 15, "democracy": 10}, "sp": [["石油の国", "ゴールド +10%", {"gold": 0.10}]],
+		"chain": [["油田の開発", {"cf": 1, "gold": 3000}], ["鉄衛団の台頭", {"ideo": ["fascism", 20]}], ["国境の要塞", {"sp": ["国境の要塞線", "砦の防御 +15%", {"fort": 0.15}]}]],
+		"fin": [["枢軸への加盟", {"joinFac": "枢軸"}], ["小協商の維持", {"favor": 15, "stab": 10}]]},
+	"石川県": {"r": "ブルガリア", "ideo": "neutral", "pop": {"fascism": 12, "communism": 10}, "sp": [["失地回復", "戦争支持 +10", {"ws": 10.0}]],
+		"chain": [["皇帝の権威", {"stab": 10}], ["失地の主張", {"claimOn": ["福井県"]}], ["農業の振興", {"sp": ["農業の振興", "食料 +10%", {"food": 0.10}]}]],
+		"fin": [["枢軸への加盟", {"joinFac": "枢軸"}], ["中立の維持", {"stab": 10}]]},
+	"福井県": {"r": "ギリシャ", "ideo": "neutral", "pop": {"democracy": 15, "communism": 6}, "sp": [["八月四日体制", "安定度 +5・戦争支持 +5", {"stab": 5.0, "ws": 5.0}]],
+		"chain": [["要塞線の建設", {"sp": ["要塞線", "砦の防御 +20%", {"fort": 0.20}]}], ["海運の国", {"gold": 3000, "cf": 1}], ["イギリスとの友好", {"favor": 15}]],
+		"fin": [["連合国への加盟", {"joinFac": "連合国"}], ["山岳の抵抗", {"sp": ["山岳の抵抗", "防御 +10%", {"def": 0.10}]}]]},
+	"山梨県": {"r": "スイス", "ideo": "democracy", "pop": {"neutral": 6}, "sp": [["武装中立", "防御 +10%・砦の防御 +15%", {"def": 0.10, "fort": 0.15}]],
+		"chain": [["銀行の国", {"sp": ["銀行の国", "ゴールド +15%", {"gold": 0.15}]}], ["国民皆兵", {"sp": ["国民皆兵", "兵の生産 +10%", {"troop": 0.10}]}], ["アルプスの要塞", {"sp": ["アルプスの要塞", "砦の防御 +20%", {"fort": 0.20}]}]],
+		"fin": [["永世中立", {"stab": 20}], ["精密工業", {"mf": 1, "cf": 1}]]},
+	"岐阜県": {"r": "ハンガリー", "ideo": "neutral", "pop": {"fascism": 18, "democracy": 8}, "sp": [["トリアノンの傷", "戦争支持 +10", {"ws": 10.0}]],
+		"chain": [["失地回復運動", {"claimOn": ["富山県"]}], ["軍備制限の撤廃", {"mf": 1}], ["矢十字党の台頭", {"ideo": ["fascism", 20]}]],
+		"fin": [["枢軸への加盟", {"joinFac": "枢軸"}], ["摂政の中立", {"stab": 15}]]},
+	"静岡県": {"r": "ユーゴスラビア", "ideo": "neutral", "pop": {"communism": 12, "democracy": 10, "fascism": 6}, "sp": [["民族の対立", "安定度 -10", {"stab": -10.0}]],
+		"chain": [["王国の統一", {"stab": 10}], ["鉱山の開発", {"cf": 1, "mf": 1}], ["小協商", {"favor": 15}]],
+		"fin": [["枢軸への接近", {"joinFac": "枢軸"}], ["パルチザンの伝統", {"sp": ["パルチザン", "防御 +10%", {"def": 0.10}]}]]},
+	"三重県": {"r": "アルバニア", "ideo": "neutral", "pop": {"fascism": 8, "democracy": 6}, "sp": [["山岳の小国", "防御 +10%", {"def": 0.10}]],
+		"chain": [["王国の近代化", {"cf": 1}], ["イタリアへの依存", {"favor": 20}], ["山の民兵", {"sp": ["山の民兵", "兵の生産 +10%", {"troop": 0.10}]}]],
+		"fin": [["独立の維持", {"sp": ["独立の維持", "防御 +10%", {"def": 0.10}]}], ["バルカンの夢", {"claimOn": ["福井県"]}]]},
+	"滋賀県": {"r": "ポルトガル", "ideo": "neutral", "pop": {"democracy": 8, "fascism": 10}, "sp": [["新国家体制", "安定度 +10", {"stab": 10.0}]],
+		"chain": [["植民地の富", {"gold": 4000}], ["イギリスとの古い同盟", {"favor": 15}], ["大西洋の島々", {"cf": 1}]],
+		"fin": [["中立の堅持", {"stab": 10}], ["イベリア協定", {"favor": 15, "sp": ["イベリア協定", "防御 +5%", {"def": 0.05}]}]]},
+	"奈良県": {"r": "アイルランド", "ideo": "democracy", "pop": {"neutral": 8, "fascism": 5}, "sp": [["自由国", "戦争支持 -10", {"ws": -10.0}]],
+		"chain": [["新憲法", {"stab": 10}], ["経済戦争の終結", {"cf": 1}], ["国防軍の拡張", {"mf": 1}]],
+		"fin": [["厳正中立", {"stab": 15}], ["連合国への加盟", {"joinFac": "連合国"}]]},
+	"兵庫県": {"r": "メキシコ", "ideo": "neutral", "pop": {"communism": 12, "democracy": 10}, "sp": [["革命の遺産", "人口の伸び +5%", {"grow": 0.05}]],
+		"chain": [["石油の国有化", {"gold": 4000, "cf": 1}], ["農地改革", {"sp": ["農地改革", "食料 +10%", {"food": 0.10}]}], ["社会主義教育", {"ideo": ["communism", 15]}]],
+		"fin": [["連合国への加盟", {"joinFac": "連合国"}], ["ラテンアメリカの盟主", {"sp": ["ラテンの盟主", "ゴールド +10%", {"gold": 0.10}]}]]},
+	"和歌山県": {"r": "ブラジル", "ideo": "neutral", "pop": {"fascism": 12, "democracy": 8}, "sp": [["新国家", "安定度 +5", {"stab": 5.0}]],
+		"chain": [["コーヒーの国", {"gold": 4000}], ["鉄鋼の国産化", {"mf": 1, "cf": 1}], ["統合主義", {"ideo": ["fascism", 15]}]],
+		"fin": [["連合国への加盟", {"joinFac": "連合国"}], ["南米の大国", {"sp": ["南米の大国", "兵の生産 +10%", {"troop": 0.10}]}]]},
+	"鳥取県": {"r": "モンゴル", "ideo": "communism", "pop": {"neutral": 10}, "sp": [["草原の騎兵", "攻撃 +5%", {"atk": 0.05}]],
+		"chain": [["ソ連との相互援助", {"favor": 20}], ["騎兵の近代化", {"sp": ["騎兵の近代化", "攻撃 +5%", {"atk": 0.05}]}], ["牧畜の振興", {"sp": ["牧畜", "食料 +10%", {"food": 0.10}]}]],
+		"fin": [["コミンテルンへの加盟", {"joinFac": "コミンテルン"}], ["草原の独立", {"stab": 10}]]},
+	"島根県": {"r": "満洲国", "ideo": "neutral", "pop": {"fascism": 15, "communism": 8}, "sp": [["傀儡の国", "安定度 -10", {"stab": -10.0}]],
+		"chain": [["工業化", {"mf": 1, "cf": 1}], ["鉄道の整備", {"infra": 3}], ["国家の体裁", {"stab": 10}]],
+		"fin": [["日本への従属", {"joinFac": "枢軸"}], ["自主独立", {"stab": 10, "ws": 10}]]},
+	"岡山県": {"r": "中国共産党", "ideo": "communism", "pop": {"neutral": 10, "democracy": 5}, "sp": [["長征の記憶", "防御 +5%・戦争支持 +10", {"def": 0.05, "ws": 10.0}]],
+		"chain": [["延安の根拠地", {"cf": 1}], ["ゲリラ戦術", {"sp": ["ゲリラ戦術", "防御 +10%", {"def": 0.10}]}], ["人民の軍", {"sp": ["人民の軍", "兵の生産 +10%", {"troop": 0.10}]}]],
+		"fin": [["国共合作", {"favor": 20, "stab": 10}], ["コミンテルンへの加盟", {"joinFac": "コミンテルン"}]]},
+	"山口県": {"r": "雲南（軍閥）", "ideo": "neutral", "pop": {"communism": 8, "democracy": 6}, "sp": [["軍閥", "安定度 -10", {"stab": -10.0}]],
+		"chain": [["雲南の鉱山", {"cf": 1, "gold": 3000}], ["滇緬公路", {"infra": 2}], ["講武堂", {"sp": ["講武堂", "攻撃 +5%", {"atk": 0.05}]}]],
+		"fin": [["国民政府への合流", {"stab": 10, "favor": 20}], ["独立軍閥", {"sp": ["独立軍閥", "防御 +10%", {"def": 0.10}]}]]},
+	"徳島県": {"r": "南アフリカ", "ideo": "democracy", "pop": {"neutral": 10, "fascism": 8}, "sp": [["金の国", "ゴールド +15%", {"gold": 0.15}]],
+		"chain": [["金鉱の開発", {"gold": 4000}], ["英連邦への忠誠", {"joinFac": "連合国"}], ["工業の拡張", {"mf": 1}]],
+		"fin": [["大陸の盾", {"sp": ["大陸の盾", "防御 +5%", {"def": 0.05}]}], ["国民党の台頭", {"ideo": ["neutral", 20]}]]},
+	"香川県": {"r": "ニュージーランド", "ideo": "democracy", "pop": {"neutral": 5}, "sp": [["遠い自治領", "戦争支持 -10", {"ws": -10.0}]],
+		"chain": [["酪農の輸出", {"sp": ["酪農の輸出", "食料 +10%", {"food": 0.10}]}], ["英連邦への忠誠", {"joinFac": "連合国"}], ["遠征軍の編成", {"mf": 1}]],
+		"fin": [["太平洋の防衛", {"sp": ["太平洋の防衛", "防御 +5%", {"def": 0.05}]}], ["社会保障の充実", {"stab": 15}]]},
+	"愛媛県": {"r": "オーストラリア", "ideo": "democracy", "pop": {"neutral": 6}, "sp": [["広大な大陸", "ゴールド +5%", {"gold": 0.05}]],
+		"chain": [["鉱山の開発", {"cf": 1}], ["英連邦への忠誠", {"joinFac": "連合国"}], ["陸軍の拡張", {"mf": 1}]],
+		"fin": [["太平洋の守り", {"sp": ["太平洋の守り", "防御 +5%", {"def": 0.05}], "ws": 10}], ["独自の外交", {"stab": 10}]]},
+	"高知県": {"r": "インド", "ideo": "democracy", "pop": {"neutral": 20, "communism": 6}, "sp": [["独立運動", "安定度 -15", {"stab": -15.0}]],
+		"chain": [["地方自治の拡大", {"stab": 10}], ["インドの工業", {"mf": 1, "cf": 1}], ["インド軍の拡張", {"sp": ["インド軍", "兵の生産 +10%", {"troop": 0.10}]}]],
+		"fin": [["英連邦への協力", {"joinFac": "連合国"}], ["完全独立", {"stab": 10, "ideo": ["neutral", 25]}]]},
+	"佐賀県": {"r": "タイ", "ideo": "neutral", "pop": {"fascism": 10, "democracy": 8}, "sp": [["緩衝国", "戦争支持 -5", {"ws": -5.0}]],
+		"chain": [["立憲革命の遺産", {"stab": 10}], ["軍の近代化", {"mf": 1}], ["失地の主張", {"claimOn": ["長崎県"]}]],
+		"fin": [["日本への接近", {"joinFac": "枢軸"}], ["中立の堅持", {"stab": 10}]]},
+	"長崎県": {"r": "蘭印", "ideo": "democracy", "pop": {"neutral": 15, "communism": 5}, "sp": [["植民地の資源", "ゴールド +10%", {"gold": 0.10}]],
+		"chain": [["油田の防衛", {"sp": ["油田の防衛", "砦の防御 +15%", {"fort": 0.15}]}], ["現地軍の編成", {"sp": ["現地軍", "兵の生産 +5%", {"troop": 0.05}]}], ["ゴムと錫", {"gold": 4000}]],
+		"fin": [["連合国への加盟", {"joinFac": "連合国"}], ["独立の機運", {"ideo": ["neutral", 20], "stab": 5}]]},
+	"沖縄県": {"r": "フィリピン", "ideo": "democracy", "pop": {"neutral": 10}, "sp": [["独立準備政府", "戦争支持 -5", {"ws": -5.0}]],
+		"chain": [["コモンウェルスの成立", {"stab": 10}], ["国軍の創設", {"mf": 1}], ["島々の防衛", {"sp": ["島々の防衛", "防御 +10%", {"def": 0.10}]}]],
+		"fin": [["アメリカとの同盟", {"joinFac": "連合国"}], ["完全独立", {"stab": 10}]]},
+	"熊本県": {"r": "トルコ", "ideo": "neutral", "pop": {"democracy": 10, "fascism": 5}, "sp": [["共和国の改革", "安定度 +5", {"stab": 5.0}]],
+		"chain": [["海峡の再武装", {"sp": ["海峡の要塞", "砦の防御 +20%", {"fort": 0.20}]}], ["工業化計画", {"mf": 1, "cf": 1}], ["ハタイ問題", {"claimOn": ["宮崎県"]}]],
+		"fin": [["中立の堅持", {"stab": 10}], ["連合国への接近", {"joinFac": "連合国"}]]},
+	"大分県": {"r": "イラン", "ideo": "neutral", "pop": {"fascism": 8, "communism": 6}, "sp": [["近代化の途上", "ゴールド -5%", {"gold": -0.05}]],
+		"chain": [["縦貫鉄道", {"infra": 3}], ["石油の利権", {"gold": 4000, "cf": 1}], ["近代軍の創設", {"mf": 1}]],
+		"fin": [["ドイツとの友好", {"ideo": ["fascism", 15]}], ["中立の宣言", {"stab": 10}]]},
+	"宮崎県": {"r": "エチオピア", "ideo": "neutral", "pop": {"democracy": 5}, "sp": [["古の帝国", "防御 +10%・軍需工場の出力 -20%", {"def": 0.10, "mf": -0.20}]],
+		"chain": [["近代化の試み", {"cf": 1}], ["山岳の要塞", {"sp": ["山岳の要塞", "砦の防御 +20%", {"fort": 0.20}]}], ["皇帝の親衛隊", {"sp": ["親衛隊", "攻撃 +5%", {"atk": 0.05}]}]],
+		"fin": [["国際連盟への訴え", {"favor": 20}], ["最後の抵抗", {"sp": ["最後の抵抗", "防御 +10%", {"def": 0.10}], "ws": 15}]]},
+	"鹿児島県": {"r": "アルゼンチン", "ideo": "neutral", "pop": {"fascism": 10, "democracy": 10}, "sp": [["汚れた十年", "安定度 -5", {"stab": -5.0}]],
+		"chain": [["穀物の輸出", {"gold": 4000}], ["国産工業", {"cf": 1, "mf": 1}], ["軍部の影響", {"ideo": ["fascism", 15]}]],
+		"fin": [["南米の雄", {"sp": ["南米の雄", "兵の生産 +10%", {"troop": 0.10}]}], ["中立の堅持", {"stab": 10}]]},
 }
-## 架空の大陸の国に振る初期の国民精神
+
+## 架空の大陸の国に配る国民精神
 const GENERIC_SPIRITS := [
-	["肥沃な平野", "食料 +12%", {"food": 0.12}], ["山岳の民", "防御 +8%", {"def": 0.08}], ["商いの都", "ゴールド +10%", {"gold": 0.10}],
-	["尚武の気風", "攻撃 +5%・戦争支持 +5", {"atk": 0.05, "ws": 5}], ["鉱山の富", "軍需工場の出力 +15%", {"mf": 0.15}], ["古き王統", "安定度 +10", {"stab": 10}],
-	["大河の恵み", "人口の伸び +10%", {"grow": 0.10}], ["城塞の国", "砦の防御 +15%", {"fort": 0.15}],
+	["肥沃な平野", "食料 +10%", {"food": 0.10}],
+	["鉄の山", "軍需工場の出力 +15%", {"mf": 0.15}],
+	["商人の国", "ゴールド +10%", {"gold": 0.10}],
+	["尚武の気風", "攻撃 +5%", {"atk": 0.05}],
+	["堅牢な城砦", "砦の防御 +20%", {"fort": 0.20}],
+	["多産の民", "人口の伸び +10%", {"grow": 0.10}],
+	["勤勉な職人", "建設費 -10%", {"build": -0.10}],
+	["結束した民", "安定度 +10", {"stab": 10.0}],
+	["軍国の伝統", "兵の生産 +10%", {"troop": 0.10}],
+	["守りの民", "防御 +8%", {"def": 0.08}],
 ]

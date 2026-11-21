@@ -322,7 +322,7 @@ func desireCands(nid: int) -> Array:
 	var lord = lordOf(nid)
 	if lord != null:
 		var pw := mine / max(1.0, nationPower(lord))
-		c.append({"k": "indep", "o": lord, "w": 30 + na.get("unrest", 0) * 0.4 + clamp_f(pw, 0, 1.5) * 25 + (10 if P == "aggr" else 0)})
+		c.append({"k": "indep", "o": lord, "w": 30 + na.get("unrest", 0) * 0.4 + clamp_f(pw, 0, 1.5) * 25 + (10 if P == "aggr" or P == "fascism" else 0)})
 	for v in vassalsOf(nid):
 		for o in G.nations:
 			if not o.alive or o.id == nid or o.id == v or lordOf(o.id) == nid: continue
@@ -465,13 +465,14 @@ func avgPower() -> float:
 func canMakeFaction(n: int) -> bool:
 	var na := NAT(n)
 	return na.alive and facOf(n) == null and lordOf(n) == null and nationPower(n) >= avgPower() * FAC.ratio
-func makeFaction(n: int) -> void:
+func makeFaction(n: int, name0 := "") -> void:
 	if not G.has("factions"): G.factions = {}
 	G.facSeq = G.get("facSeq", 0) + 1
 	var id: int = G.facSeq
 	var nm: String = NAT(n).name
 	if nm.ends_with("都") or nm.ends_with("道") or nm.ends_with("府") or nm.ends_with("県"): nm = nm.substr(0, nm.length() - 1)
 	nm += "陣営"
+	if name0 != "": nm = name0
 	G.factions[id] = {"id": id, "name": nm, "leader": n, "members": [n], "t0": G.turn}
 	NAT(n).faction = id
 	var msg := "%s が「%s」を結成する" % [NAT(n).name, nm]
@@ -576,7 +577,7 @@ func cpuFaction(nid: int) -> void:
 			var top = topThreat()
 			var vsTop: bool = top != null and not F.members.has(top.id) and natHops(o.id, top.id) <= 2
 			var sc := (favorOf(o.id, nid) - 50) * 0.8 + cpuDanger(o.id) * 35 + (20 if common else 0) + (15 if vsTop else 0) \
-				- (10 if o.persona == "aggr" else 0) - (25 if nationPower(o.id) > nationPower(nid) * 0.8 else 0) + 10
+				+ (25 if o.get("ideo") == na.get("ideo") else -20) - (25 if nationPower(o.id) > nationPower(nid) * 0.8 else 0) + 10
 			for d in desiresOf(o.id):
 				if DESIRE[d.k].war and F.members.has(desireNat(d)):
 					sc -= 40
@@ -589,6 +590,7 @@ func cpuFaction(nid: int) -> void:
 				addFavor(nid, o.id, -2)
 	if F != null and F.leader != nid and G.factions.has(F.id):
 		var wantOut := favorOf(nid, F.leader) < 25
+		if NAT(F.leader).get("ideo") != na.get("ideo") and randf() < 0.3: wantOut = true
 		if not wantOut:
 			for d in desiresOf(nid):
 				if DESIRE[d.k].war and F.members.has(desireNat(d)): wantOut = true

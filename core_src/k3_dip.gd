@@ -7,8 +7,8 @@ var DIP := {
 	"warFavor": -100, "warOthers": -26, "warAllyOthers": -8, "justMul": 0.35, "captureFavor": -6,
 	"driftPeace": 0.5, "driftAlly": 1.2, "driftWar": -1.5, "driftCap": 62,
 	"driftCommon": 1.6, "driftCommonCap": 95,
-	"cpuWarChance": {"aggr": 0.28, "bal": 0.14, "def": 0.07, "econ": 0.05},
-	"cpuWarNeed": {"aggr": 40, "bal": 58, "def": 75, "econ": 85},
+	"cpuWarChance": {"aggr": 0.28, "bal": 0.14, "def": 0.07, "econ": 0.05, "fascism": 0.32, "communism": 0.14, "neutral": 0.06, "democracy": 0.03},
+	"cpuWarNeed": {"aggr": 40, "bal": 58, "def": 75, "econ": 85, "fascism": 35, "communism": 58, "neutral": 80, "democracy": 95},
 	"cpuAmbition": 0.8, "cpuAmbitionMax": 30, "cpuPeaceTurns": 12,
 	"allyTurns": 20, "allyRenewMin": 70, "peaceCool": 5, "reach": 2,
 	"vassalRatio": 1.7, "vassalWarRatio": 1.3, "vassalFavor": 35, "tribute": 0.15,
@@ -141,7 +141,7 @@ func tradePartners(a: int) -> Array:
 	for o in G.nations:
 		if o.alive and isTrade(a, o.id): r.append(o.id)
 	return r
-func tradeEase(nid: int) -> float: return PERSONA.get(NAT(nid).persona, PERSONA.bal).tradeW
+func tradeEase(nid: int) -> float: return PERSONA.get(NAT(nid).persona, PERSONA.neutral).tradeW
 func tradeReason(a: int, b: int) -> String:
 	if isTrade(a, b): return "すでに通商しています"
 	var st := relState(a, b)
@@ -177,7 +177,7 @@ func tradeIncome(nid: int) -> int:
 
 # ---------- 不可侵条約 ----------
 func pactLeft(a: int, b: int) -> int: return 0 if a == b else max(0, G.dip.pact[a][b] - G.turn)
-func pactEase(nid: int) -> float: return PERSONA.get(NAT(nid).persona, PERSONA.bal).pactW
+func pactEase(nid: int) -> float: return PERSONA.get(NAT(nid).persona, PERSONA.neutral).pactW
 func pactNeed(b: int) -> float: return PACT.min - pactEase(b)
 func makePact(a: int, b: int) -> void:
 	G.dip.pact[a][b] = G.turn + PACT.turns; G.dip.pact[b][a] = G.turn + PACT.turns
@@ -221,7 +221,7 @@ func peaceTiesTurn() -> void:
 				if favorOf(a, b) < PACT.favorCap: addFavor(a, b, PACT.favor)
 				if favorOf(b, a) < PACT.favorCap: addFavor(b, a, PACT.favor)
 				if G.turn >= p - 1:
-					if favorOf(a, b) >= PACT.renewMin and favorOf(b, a) >= PACT.renewMin and relState(a, b) == "peace":
+					if favorOf(a, b) >= PACT.renewMin and favorOf(b, a) >= PACT.renewMin and relState(a, b) == "peace" and pactOK(a, b):
 						G.dip.pact[a][b] = G.turn + 1 + PACT.turns; G.dip.pact[b][a] = G.turn + 1 + PACT.turns
 						chron("%s と %s が不可侵条約を更新" % [NAT(a).name, NAT(b).name], a, "dip")
 					else:
@@ -441,7 +441,7 @@ func natVP(n: int) -> float:
 	return s
 func surrenderLimit(n: int) -> float:
 	var na := NAT(n)
-	var base: float = {"def": 0.78, "aggr": 0.7, "bal": 0.66, "econ": 0.58}.get(na.persona, 0.66)
+	var base: float = {"def": 0.78, "aggr": 0.7, "bal": 0.66, "econ": 0.58, "democracy": 0.78, "fascism": 0.7, "communism": 0.66, "neutral": 0.6}.get(na.persona, 0.66)
 	return clamp_f(base - na.get("fatigue", 0) / 250.0, 0.35, 0.85)
 func surrenderProg(W: Dictionary, n: int) -> float:
 	var base: float = W.vp0.get(n, 0)

@@ -69,7 +69,7 @@ const TRAIT_RATE := 0.45
 const DEV_COST := [0, 2000, 5000, 10000, 20000, 0]
 const ROAD_COST := [0, 5000, 12000, 0]
 const INFRA_COST := [0, 0, 12000, 30000]
-const INFRA_RATE := {"econ": 0.22, "bal": 0.14, "def": 0.12, "aggr": 0.08}
+const INFRA_RATE := {"econ": 0.22, "bal": 0.14, "def": 0.12, "aggr": 0.08, "neutral": 0.22, "democracy": 0.18, "communism": 0.14, "fascism": 0.08}
 const INFRA_N := ["", "乏しい", "整った", "主要街道"]
 const FORT_DEV_DEF := [0, 0, 0.05, 0.10, 0.15, 0.20]
 const GEN_ABIL := [
@@ -91,6 +91,7 @@ func resetColors(list = null) -> void:
 const SIZES := {"small": {"n": 250, "nat": 8}, "mid": {"n": 400, "nat": 10}, "large": {"n": 600, "nat": 12}}
 
 const PERSONA := {
+	"fascism": IDEO_PERSONA.fascism, "communism": IDEO_PERSONA.communism, "democracy": IDEO_PERSONA.democracy, "neutral": IDEO_PERSONA.neutral,
 	"aggr": {"n": "攻勢型", "d": "軍団と侵攻を優先", "army": 1, "goal": 0.85, "atkTh": 1.05, "guard": 0.34, "mkt": 0.22, "devG": 9000, "roadG": 21000, "mix": {"inf": 0.42, "spe": 0.13, "arc": 0.20, "cav": 0.25}, "settle": 0.8,
 		"tradeW": -10, "pactW": -25, "fab": 0.45, "noCB": 0.12, "peaceW": -0.03, "dd": "口実を作ってでも弱い隣国を狙う。条約は好まない"},
 	"def": {"n": "防衛型", "d": "砦と国境を重視", "army": 0, "goal": 1.10, "atkTh": 1.50, "guard": 0.62, "mkt": 0.40, "devG": 7000, "roadG": 15000, "mix": {"inf": 0.40, "spe": 0.32, "arc": 0.20, "cav": 0.08}, "settle": 1.0,

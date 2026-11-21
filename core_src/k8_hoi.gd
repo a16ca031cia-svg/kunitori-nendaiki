@@ -2,8 +2,7 @@
 # （データは k9_data.gd）
 
 ## 工業の盛んな県は、最初から工場を持つ（[軍需, 民需]）
-const START_IND := {"東京都": [2, 3], "大阪府": [1, 3], "愛知県": [2, 2], "神奈川県": [1, 2], "兵庫県": [1, 2], "福岡県": [1, 2],
-	"京都府": [0, 2], "広島県": [1, 1], "静岡県": [1, 1], "埼玉県": [1, 1], "長崎県": [1, 1], "滋賀県": [1, 0], "鹿児島県": [1, 0]}
+const START_IND := {"群馬県": [3, 2], "東京都": [2, 3], "大阪府": [2, 4], "北海道": [2, 1], "長野県": [2, 2], "愛知県": [1, 2], "福岡県": [2, 2], "栃木県": [2, 1], "神奈川県": [1, 2], "兵庫県": [1, 1], "広島県": [1, 1], "埼玉県": [1, 1], "千葉県": [1, 1]}
 const EQ_PER_MF := 300       # 軍需工場1つの軍需品（毎ターン）
 const CF_GOLD := 300         # 民需工場1つのゴールド
 const EQ_COST := 0.5         # 兵1人に要る軍需品
@@ -16,26 +15,36 @@ func hoiInit(g: Dictionary) -> void:
 	gen.shuffle()
 	for na in g.nations:
 		if na.has("ideo"): continue
-		var ideo := "kunshu"
-		match na.persona:
-			"aggr": ideo = "gunsei" if randf() < 0.6 else "kunshu"
-			"econ": ideo = "gougi" if randf() < 0.6 else "kunshu"
-			"def": ideo = "kunshu" if randf() < 0.7 else "souson"
-			_: ideo = IDEO_KEYS[randi() % IDEO_KEYS.size()]
-		na.ideo = ideo
+		var cd = COUNTRY.get(na.name)
+		var ideo := ""
 		var pop := {}
-		for k in IDEO_KEYS: pop[k] = 10.0 + randf() * 10.0
-		pop[ideo] = 55.0
+		if cd != null:
+			ideo = cd.ideo
+			na.role = cd.r
+			for k in IDEO_KEYS: pop[k] = cd.pop.get(k, 2.0)
+			var rest := 0.0
+			for k in IDEO_KEYS:
+				if k != ideo: rest += pop[k]
+			pop[ideo] = max(40.0, 100.0 - rest)
+		else:
+			# 架空の大陸：思想はくじ（非同盟が多め）
+			var r := randf()
+			ideo = "neutral" if r < 0.4 else ("democracy" if r < 0.62 else ("fascism" if r < 0.82 else "communism"))
+			for k in IDEO_KEYS: pop[k] = 8.0 + randf() * 12.0
+			pop[ideo] = 55.0
+		na.ideo = ideo
+		na.persona = ideo
 		na.ipop = pop
 		_normPop(na)
-		na.stab = 55.0 + IDEO[ideo].stab
+		na.stab = 55.0 + IDEO[ideo].stab + (cd.get("stab", 0) if cd != null else 0)
 		na.ws = 25.0 + IDEO[ideo].ws
 		na.pp = 50.0
 		na.eq = 3000
 		na.spirits = []
+		na.guar = []
 		na.focus = {"cur": null, "prog": 0, "done": []}
-		var p = PREF.get(na.name)
-		if p != null: _addSpirit(na, p[0][0], p[0][1], p[0][2], "固有")
+		if cd != null:
+			for sp in cd.sp: _addSpirit(na, sp[0], sp[1], sp[2], "固有")
 		elif gen.size(): _addSpirit(na, gen[na.id % gen.size()][0], gen[na.id % gen.size()][1], gen[na.id % gen.size()][2], "固有")
 		hoiRecalc(na)
 		na.stab = clamp_f(na.stab + na.mods.get("stab", 0.0), 5, 95)
@@ -80,7 +89,7 @@ func hoiRecalc(na: Dictionary) -> void:
 	var m := {}
 	for sp in na.get("spirits", []):
 		for k in sp.m: m[k] = m.get(k, 0.0) + sp.m[k]
-	var im: Dictionary = IDEO.get(na.get("ideo", "kunshu"), IDEO.kunshu).mod
+	var im: Dictionary = IDEO.get(na.get("ideo", "neutral"), IDEO.neutral).mod
 	for k in im: m[k] = m.get(k, 0.0) + im[k]
 	na.mods = m
 ## 修正の値（国民精神と政体の合計）
@@ -159,10 +168,10 @@ func hoiTurn(nid: int) -> void:
 	na.stab = clamp_f(na.stab + (clamp_f(st, 0, 100) - na.stab) * 0.12, 0, 100)
 	na.ws = clamp_f(na.ws + (clamp_f(ws, 0, 100) - na.ws) * 0.12, 0, 100)
 	# 政体の支持率：与党は安定度が高いほど伸び、隣国の政体にも引っ張られる
-	na.ipop[na.ideo] = na.ipop[na.ideo] + (na.stab - 50) * 0.04
+	na.ipop[na.ideo] = na.ipop[na.ideo] + (na.stab - 40) * 0.02
 	for o in G.nations:
 		if o.alive and o.id != nid and nationsAdjacent(nid, o.id) and o.has("ideo"):
-			na.ipop[o.ideo] = na.ipop.get(o.ideo, 0.0) + 0.25
+			na.ipop[o.ideo] = na.ipop.get(o.ideo, 0.0) + 0.08
 	_normPop(na)
 	_ideoShift(na)
 	# 同じ政体どうしは近づき、違う政体とは少し離れる
@@ -171,38 +180,69 @@ func hoiTurn(nid: int) -> void:
 		if o.ideo == na.ideo:
 			if favorOf(nid, o.id) < 70: addFavor(nid, o.id, 0.4)
 		elif favorOf(nid, o.id) > 20: addFavor(nid, o.id, -0.15)
+	# 思想の合わない同盟は解ける
+	for o in G.nations:
+		if o.alive and o.id != nid and isAlly(nid, o.id) and not isVassal(o.id, nid) and not isVassal(nid, o.id) and not ideoCompat(nid, o.id) and randf() < 0.15:
+			breakAlly(nid, o.id)
+			chron("%s と %s の同盟が思想の違いで解消される" % [na.name, o.name], nid, "dip")
 	# 国家方針
 	_focusTurn(na)
-## 政変：ほかの政体の支持が過半を超え、安定度が低い（または圧倒的な支持）と政体が変わる
+## 政変：ほかの思想の支持が過半を超え、安定度が低い（または圧倒的な支持）と政権が変わる
 func _ideoShift(na: Dictionary) -> void:
 	var best: String = na.ideo
 	for k in IDEO_KEYS:
 		if na.ipop[k] > na.ipop[best]: best = k
 	if best == na.ideo: return
 	var p: float = na.ipop[best]
-	var coup: bool = p >= 50 and na.stab < 40
-	var peaceful: bool = p >= 65 and na.ideo != "gunsei"
+	var oneParty: bool = na.ideo == "fascism" or na.ideo == "communism"
+	var coup: bool = p >= 50 and na.stab < (25 if oneParty else 40)
+	var peaceful: bool = p >= 65 and na.ideo != "fascism" and na.ideo != "communism"
 	if not coup and not peaceful: return
+	setGov(na, best, "政変" if coup else "選挙")
+## 政権を別の思想に変える（ふるまいも変わる）
+func setGov(na: Dictionary, k: String, why: String) -> void:
+	if na.ideo == k: return
 	var old: String = na.ideo
-	na.ideo = best
-	na.ipop[best] = max(na.ipop[best], 55.0)
+	na.ideo = k
+	na.persona = k
+	na.ipop[k] = max(na.ipop.get(k, 0.0), 55.0)
 	_normPop(na)
 	hoiRecalc(na)
-	na.stab = clamp_f(na.stab - (15 if coup else 5), 0, 100)
-	var msg := "%s で%s — %s から %s へ" % [na.name, "政変" if coup else "政体の移行", IDEO[old].n, IDEO[best].n]
-	logMsg(msg, "war" if coup else "")
+	na.stab = clamp_f(na.stab - (15 if why == "政変" else 5), 0, 100)
+	var msg := "%s で%s — %s から %s の政権へ" % [na.name, why, IDEO[old].n, IDEO[k].n]
+	logMsg(msg, "war" if k == "fascism" or why == "政変" else "")
 	chron(msg, na.id, "gov")
+	# 盟主と思想が違う陣営からは抜ける
+	var F = facOf(na.id)
+	if F != null and F.leader != na.id and NAT(F.leader).get("ideo") != k: leaveFaction(na.id, "政権交代")
+## 1ターン＝1か月（1936年1月から）
+func dateStr(turn: int) -> String:
+	return "%d年%d月" % [1936 + (turn - 1) / 12, (turn - 1) % 12 + 1]
+func natByName(nm: String) -> int:
+	for o in G.nations:
+		if o.alive and o.name == nm: return o.id
+	return -1
+func roleOf(nid: int) -> String: return NAT(nid).get("role", "")
 
 # ---------- 国家方針 ----------
 var _treeCache := {}
-## その国の方針ツリー（共通の枝＋固有の枝）
+## その国の方針ツリー（共通の枝＋固有の枝。大国は産業・軍事の枝と大きな固有ツリー）
 func focusTree(na: Dictionary) -> Array:
 	if _treeCache.has(na.name): return _treeCache[na.name]
-	var out := FOCUS_COMMON.duplicate(true)
-	var p = PREF.get(na.name)
-	if p != null:
-		var chain: Array = p[1]
-		var fin: Array = p[2]
+	var cd = COUNTRY.get(na.name) if G.get("size") == "japan" else null
+	var major: bool = cd != null and cd.has("tree")
+	var out := []
+	for f in FOCUS_COMMON:
+		if not major or f.br == "ind" or f.br == "mil": out.append(f.duplicate(true))
+	if major:
+		for f in cd.tree:
+			var g: Dictionary = f.duplicate(true)
+			g.x = 6.0 + f.x
+			g.br = "uniq"
+			out.append(g)
+	elif cd != null:
+		var chain: Array = cd.chain
+		var fin: Array = cd.fin
 		var prev := ""
 		for i in chain.size():
 			var id := "u%d" % i
@@ -213,6 +253,8 @@ func focusTree(na: Dictionary) -> Array:
 			out.append({"id": id2, "n": fin[j][0], "x": FOCUS_UNIQUE_X + j, "y": chain.size(), "t": 8, "req": [prev], "ex": ["u3%s" % ["b", "a"][j]], "br": "uniq", "e": fin[j][1]})
 	_treeCache[na.name] = out
 	return out
+func isMajor(na: Dictionary) -> bool:
+	return G.get("size") == "japan" and COUNTRY.get(na.name, {}).has("tree")
 func focusById(na: Dictionary, id: String):
 	for f in focusTree(na):
 		if f.id == id: return f
@@ -239,28 +281,37 @@ func _focusTurn(na: Dictionary) -> void:
 			fc.done.append(f.id)
 			fc.cur = null
 			fc.prog = 0
-			_applyFocus(na, f)
-			var msg := "%s が国家方針「%s」を達成" % [na.name, f.n]
-			if concerns([na.id]): logMsg(msg, "good")
+			var msg := "%s（%s）が国家方針「%s」を達成" % [na.name, na.get("role", ""), f.n] if na.get("role", "") != "" else "%s が国家方針「%s」を達成" % [na.name, f.n]
+			if concerns([na.id]) or (f.br == "uniq" and isMajor(na)): logMsg(msg, "good")
 			chron(msg, na.id, "gov")
+			_applyFocus(na, f)
 	if fc.cur == null: _pickFocus(na)
+const WAR_FX := ["warOn", "claimOn", "demand", "claim"]
 func _pickFocus(na: Dictionary) -> void:
 	var cands := []
 	var war := inWar(na.id)
+	var id: String = na.ideo
 	for f in focusTree(na):
 		if not focusAvailable(na, f): continue
-		var w := 10.0
+		var w: float = 10.0 * f.get("w", 1.0)
 		match f.br:
-			"uniq": w *= 2.5
-			"ind": w *= 1.8 if na.persona == "econ" else 1.0
-			"mil": w *= (1.8 if na.persona == "aggr" or na.persona == "def" else 1.0) * (2.0 if war else 1.0)
+			"uniq": w *= 7.0 if isMajor(na) else 3.0
+			"ind": w *= 1.6 if id == "neutral" or id == "democracy" else 1.0
+			"mil": w *= (1.8 if id == "fascism" or id == "communism" else 1.0) * (2.0 if war else 1.0)
 			"pol": w *= 2.0 if na.stab < 45 else 1.0
-			"dip": w *= 1.4 if na.persona == "econ" or na.persona == "bal" else 0.8
+			"dip": w *= 1.3 if id == "democracy" or id == "neutral" else 0.8
 		var e: Dictionary = f.e
 		if e.has("ideo"):
 			var k: String = e.ideo[0]
-			w *= 3.0 if k == na.ideo else (0.6 + na.ipop.get(k, 0.0) / 40.0)
-		if e.has("claim") and na.ws < IDEO[na.ideo].wsNeed - 15: w *= 0.4
+			w *= 2.0 if k == id else (0.6 + na.ipop.get(k, 0.0) / 40.0)
+		if e.has("gov"): w *= 1.0 + na.ipop.get(e.gov, 0.0) / 15.0
+		for x in WAR_FX:
+			if e.has(x):
+				w *= 2.0 if id == "fascism" else (0.3 if id == "democracy" else 1.0)
+				break
+		if e.has("joinFac"):
+			var F = _facNamed(e.joinFac)
+			if F != null and NAT(F.leader).get("ideo") != id: w *= 0.3
 		cands.append([f, w])
 	if cands.is_empty(): return
 	var sum := 0.0
@@ -284,6 +335,7 @@ func _applyFocus(na: Dictionary, f: Dictionary) -> void:
 	if e.has("eq"): na.eq += e.eq
 	if e.has("mf"): _buildFactories(nid, "mf", e.mf)
 	if e.has("cf"): _buildFactories(nid, "cf", e.cf)
+	if e.has("gov"): setGov(na, e.gov, "方針「%s」" % f.n)
 	if e.has("ideo"):
 		na.ipop[e.ideo[0]] = na.ipop.get(e.ideo[0], 0.0) + e.ideo[1]
 		_normPop(na)
@@ -313,11 +365,131 @@ func _applyFocus(na: Dictionary, f: Dictionary) -> void:
 	if e.has("favor"):
 		for o in G.nations:
 			if o.alive and o.id != nid and nationsAdjacent(nid, o.id): addFavor(o.id, nid, e.favor)
+	if e.has("pact"):
+		var o := natByName(e.pact)
+		if o >= 0 and o != nid and relState(nid, o) == "peace":
+			makePact(nid, o)
+			chron("%s と %s が不可侵条約を結ぶ（%s）" % [na.name, NAT(o).name, f.n], nid, "dip")
+	if e.has("claimOn"):
+		for nm in e.claimOn:
+			var o := natByName(nm)
+			if o >= 0 and o != nid and not sameFaction(nid, o) and lordOf(o) != nid:
+				if na.ideo == "fascism" or na.ideo == "communism": _turnOn(nid, o)
+				grantCB(nid, o, "「%s」" % f.n, 40)
+				chron("%s が %s への領有権を主張（%s）" % [na.name, NAT(o).name, f.n], nid, "dip")
+	if e.has("fac"): _facCreate(nid, e.fac)
+	if e.has("joinFac"): _facJoin(nid, e.joinFac)
+	if e.has("invite"):
+		var F = facOf(nid)
+		if F != null and F.leader == nid:
+			for nm in e.invite:
+				var o := natByName(nm)
+				if o >= 0 and o != nid and facOf(o) == null and lordOf(o) == null and not atWar(nid, o) and NAT(o).get("ideo") == na.ideo:
+					joinFaction(F, o)
+	if e.has("guar"):
+		for nm in e.guar:
+			var o := natByName(nm)
+			if o >= 0 and o != nid and not na.guar.has(o):
+				na.guar.append(o)
+				var msg := "%s が %s の独立を保証する" % [na.name, NAT(o).name]
+				if concerns([nid, o]): logMsg(msg, "good")
+				chron(msg, nid, "dip")
+	if e.has("demand"):
+		for nm in e.demand:
+			var o := natByName(nm)
+			if o >= 0: _demand(na, o, f.n)
+	if e.has("warOn"):
+		var o := natByName(e.warOn)
+		if o >= 0 and o != nid and not sameFaction(nid, o) and lordOf(o) != nid:
+			_turnOn(nid, o)
+			grantCB(nid, o, "「%s」" % f.n, 40)
+			na.ws = clamp_f(na.ws + 10, 0, 100)
+			if not inWar(nid) and nationsAdjacent(nid, o) and canPrepare(nid, o) and hoiWarOK(nid, o):
+				startWarPrep(nid, o)
+				na.forceWar = o
 	nations_changed.emit()
+## 併合・従属の要求（アンシュルス・ズデーテンなど）。断られたら大義を得る
+func _demand(na: Dictionary, o: int, why: String) -> void:
+	var nid: int = na.id
+	var B := NAT(o)
+	if not B.alive or o == nid or lordOf(o) == nid or sameFaction(nid, o) or atWar(nid, o): return
+	var theirs := nationPower(o)
+	var F = facOf(o)
+	if F != null:
+		for m in F.members:
+			if m != o and NAT(m).alive: theirs += nationPower(m) * 0.5
+	for g in G.nations:
+		if g.alive and g.id != nid and g.get("guar", []).has(o): theirs += nationPower(g.id) * 0.5
+	var ratio := nationPower(nid) / max(1.0, theirs)
+	var same: bool = B.get("ideo") == na.ideo
+	var sympathy: float = B.get("ipop", {}).get(na.ideo, 0.0)
+	var annexOK: bool = not inWar(o) and (ratio >= 2.2 or (same and ratio >= 1.2) or (sympathy >= 40 and ratio >= 1.0))
+	var msg := ""
+	if annexOK and nationsAdjacent(nid, o):
+		msg = "%s が %s の要求を受け入れ、併合される（%s）" % [B.name, na.name, why]
+		logMsg(msg, "war")
+		chron(msg, nid, "dip")
+		annex(nid, o, why)
+	elif not inWar(o) and ratio >= 1.6 and lordOf(o) == null and vassalsOf(o).is_empty():
+		msg = "%s が %s の要求を受け入れ、従属する（%s）" % [B.name, na.name, why]
+		logMsg(msg, "war")
+		chron(msg, nid, "dip")
+		makeVassal(nid, o, why)
+	else:
+		grantCB(nid, o, "「%s」の要求を拒否された" % why, 40)
+		_turnOn(nid, o)
+		na.ws = clamp_f(na.ws + 10, 0, 100)
+		msg = "%s が %s の要求（%s）を拒否する" % [B.name, na.name, why]
+		logMsg(msg, "war")
+		chron(msg, nid, "dip")
+		if na.ideo == "fascism" and not inWar(nid) and nationsAdjacent(nid, o) and canPrepare(nid, o) and hoiWarOK(nid, o):
+			startWarPrep(nid, o)
+			na.forceWar = o
+func _facNamed(name: String):
+	for F in G.get("factions", {}).values():
+		if F.name == name: return F
+	return null
+const FAC_IDEO := {"枢軸": "fascism", "連合国": "democracy", "コミンテルン": "communism"}
+## 盟主と敵対する思想でなければ陣営に入れる
+func facFit(a: int, b: int) -> bool:
+	var x: String = NAT(a).get("ideo", "")
+	var y: String = NAT(b).get("ideo", "")
+	if x == y or x == "neutral" or y == "neutral": return true
+	return false
+func _facCreate(nid: int, name: String) -> void:
+	var F = facOf(nid)
+	if F != null:
+		if F.leader == nid and _facNamed(name) == null: F.name = name
+		return
+	if _facNamed(name) != null:
+		_facJoin(nid, name)
+		return
+	makeFaction(nid, name)
+func _facJoin(nid: int, name: String) -> void:
+	var F = _facNamed(name)
+	var cur = facOf(nid)
+	if F == null:
+		if cur == null and isMajor(NAT(nid)) and FAC_IDEO.get(name, NAT(nid).ideo) == NAT(nid).ideo: makeFaction(nid, name)
+		return
+	if cur == F: return
+	if not facFit(nid, F.leader): return
+	for m in F.members:
+		if atWar(nid, m): return
+	if cur != null: leaveFaction(nid, "quiet")
+	joinFaction(F, nid)
+## 宣戦された国に保証を与えている国は参戦する
+func hoiGuarantee(a: int, b: int) -> void:
+	var wid := warOf(a, b)
+	for g in G.nations:
+		if not g.alive or g.id == a or g.id == b: continue
+		if not g.get("guar", []).has(b): continue
+		if atWar(g.id, a) or sameFaction(g.id, a) or isAlly(g.id, a) or lordOf(g.id) != null: continue
+		enterWar(g.id, a, "%s の独立の保証により参戦" % NAT(b).name, wid)
 ## 方針の効果を文で
 func focusDesc(f: Dictionary) -> String:
 	var e: Dictionary = f.e
 	var s := []
+	if e.has("gov"): s.append("%s の政権になる" % IDEO[e.gov].n)
 	if e.has("rm"): s.append("「%s」を外す" % e.rm)
 	if e.has("sp"): s.append("国民精神「%s」（%s）" % [e.sp[0], e.sp[1]])
 	if e.has("stab"): s.append("安定度 %+d" % e.stab)
@@ -330,15 +502,43 @@ func focusDesc(f: Dictionary) -> String:
 	if e.has("ideo"): s.append("%s の支持 +%d" % [IDEO[e.ideo[0]].n, e.ideo[1]])
 	if e.has("dev"): s.append("町%dか所の開発度 +1" % e.dev)
 	if e.has("infra"): s.append("%dか所のインフラ +1" % e.infra)
-	if e.has("claim"): s.append("隣国への大義（25ターン）")
+	if e.has("claim"): s.append("弱い隣国への大義（25ターン）")
 	if e.has("favor"): s.append("隣国の好感度 +%d" % e.favor)
+	if e.has("pact"): s.append("%s と不可侵条約" % _roleName(e.pact))
+	if e.has("claimOn"): s.append("%s への大義" % "・".join(e.claimOn.map(_roleName)))
+	if e.has("warOn"): s.append("%s への大義と開戦準備" % _roleName(e.warOn))
+	if e.has("demand"): s.append("%s に併合・従属を要求（断られたら大義）" % "・".join(e.demand.map(_roleName)))
+	if e.has("guar"): s.append("%s の独立を保証（攻められたら参戦）" % "・".join(e.guar.map(_roleName)))
+	if e.has("fac"): s.append("陣営「%s」を結成" % e.fac)
+	if e.has("joinFac"): s.append("陣営「%s」に加わる" % e.joinFac)
+	if e.has("invite"): s.append("%s を陣営に招く" % "・".join(e.invite.map(_roleName)))
 	return "・".join(s)
-## 戦を始められるだけの戦争支持があるか（合議制は大義も要る）
+func _roleName(nm: String) -> String:
+	var cd = COUNTRY.get(nm)
+	return ("%s（%s）" % [cd.r, nm.trim_suffix("県").trim_suffix("都").trim_suffix("府")]) if cd != null else nm
+## 戦を始められるだけの戦争支持があるか（民主主義は大義も要る）
 var HOI_GATE := true
 func hoiWarOK(nid: int, target := -1) -> bool:
 	if not HOI_GATE: return true
 	var na := NAT(nid)
 	if not na.has("ideo"): return true
 	if na.ws < IDEO[na.ideo].wsNeed: return false
-	if na.ideo == "gougi" and target >= 0 and not hasCB(nid, target): return false
+	if na.ideo == "democracy" and target >= 0 and not hasCB(nid, target): return false
 	return true
+## 思想の相性：ファシズム・共産主義は同じ思想としか同盟しない
+func ideoCompat(a: int, b: int) -> bool:
+	var x: String = NAT(a).get("ideo", "")
+	var y: String = NAT(b).get("ideo", "")
+	if x == "" or y == "" or x == y: return true
+	return not (x == "fascism" or x == "communism" or y == "fascism" or y == "communism")
+## 不可侵条約を更新してよいか（ファシズムは大義を持つ相手とは更新しない）
+func pactOK(a: int, b: int) -> bool:
+	if NAT(a).get("ideo") == "fascism" and hasCB(a, b): return false
+	if NAT(b).get("ideo") == "fascism" and hasCB(b, a): return false
+	return true
+## 方針で狙う相手とは同盟・条約を解く
+func _turnOn(nid: int, o: int) -> void:
+	if isAlly(nid, o) and not isVassal(o, nid) and not isVassal(nid, o): breakAlly(nid, o)
+	if pactLeft(nid, o) > 0:
+		G.dip.pact[nid][o] = 0; G.dip.pact[o][nid] = 0
+		chron("%s が %s との不可侵条約を破棄する" % [NAT(nid).name, NAT(o).name], nid, "dip")

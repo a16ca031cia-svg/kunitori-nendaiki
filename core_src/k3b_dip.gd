@@ -161,6 +161,7 @@ func declareWar(a: int, b: int, _byPlayer := false) -> void:
 	dipReport("war", a, b, true, note)
 	joinWarByPact(a, b)
 	factionCallToArms(a, b)
+	hoiGuarantee(a, b)
 	invalidateSupply()
 func makePeace(a: int, b: int) -> void:
 	if not atWar(a, b): return
@@ -303,7 +304,7 @@ func dipTurn() -> void:
 		for b in range(a + 1, n):
 			if not isAlly(a, b) or isVassal(a, b) or isVassal(b, a): continue
 			if allyUntil(a, b) and G.turn >= allyUntil(a, b):
-				var keep := favorOf(a, b) >= DIP.allyRenewMin and favorOf(b, a) >= DIP.allyRenewMin and natNear(a, b)
+				var keep := favorOf(a, b) >= DIP.allyRenewMin and favorOf(b, a) >= DIP.allyRenewMin and natNear(a, b) and ideoCompat(a, b)
 				if keep: renewAlly(a, b)
 				else: expireAlly(a, b)
 	vassalTurn()
@@ -416,6 +417,7 @@ func canAskVassal(a: int, b: int) -> bool:
 	var need: float = DIP.vassalWarRatio if atWar(a, b) else DIP.vassalRatio
 	return pa / pb >= need
 func vassalAccept(a: int, b: int) -> bool:
+	if isMajor(NAT(b)) and not atWar(a, b): return false
 	var ratio := nationPower(a) / max(1.0, nationPower(b))
 	var war := atWar(a, b)
 	var fav := favorOf(b, a)

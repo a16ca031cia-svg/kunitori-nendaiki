@@ -947,9 +947,10 @@ func _drawLabels() -> void:
 		var n: int = cnt.get(na.id, 0)
 		var rel = natRel(sel, na.id) if sel != null and sel >= 0 else null
 		var fsz = int(round((clamp(10 + sqrt(n) * 1.6, 11, 19) if many else clamp(12 + n * 0.5, 13, 25)) * (0.78 if size.x < 640 else 1.0)))
-		var w = fontD.get_string_size(na.name, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x
+		var lbl: String = na.get("role", na.name)
+		var w = fontD.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x
 		var badge: String = REL_JP[rel] if rel != null and rel != "peace" else ""
-		boxes.append({"na": na, "x": p.x, "y": p.y, "w": w, "bw": w + 20 + (46 if badge != "" else 0), "h": fsz * 1.56, "size": fsz, "rel": rel, "badge": badge, "n": n})
+		boxes.append({"na": na, "lbl": lbl, "x": p.x, "y": p.y, "w": w, "bw": w + 20 + (46 if badge != "" else 0), "h": fsz * 1.56, "size": fsz, "rel": rel, "badge": badge, "n": n})
 	boxes.sort_custom(func(a, b):
 		var sa: bool = a.rel == "self"
 		var sb: bool = b.rel == "self"
@@ -976,7 +977,7 @@ func _drawLabels() -> void:
 		labelL.draw_rect(rc, Color8(20, 24, 32, 214))
 		labelL.draw_rect(rc, Color(RELC[b.rel]) if b.badge != "" else Color(1, 1, 1, 0.18), false, 1.4)
 		var nx: float = (b.x - 23 if b.badge != "" else b.x) - b.w / 2
-		labelL.draw_string(fontD, Vector2(nx, b.y + b.size * 0.36), b.na.name, HORIZONTAL_ALIGNMENT_LEFT, -1, b.size, readable(b.na.color))
+		labelL.draw_string(fontD, Vector2(nx, b.y + b.size * 0.36), b.lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, b.size, readable(b.na.color))
 		if b.badge != "":
 			var bs = int(max(11, b.size * 0.62))
 			labelL.draw_string(fontB, Vector2(b.x - 23 + b.w / 2 + 22 - fontB.get_string_size(b.badge, HORIZONTAL_ALIGNMENT_LEFT, -1, bs).x / 2, b.y + bs * 0.36), b.badge, HORIZONTAL_ALIGNMENT_LEFT, -1, bs, Color(RELC[b.rel]))

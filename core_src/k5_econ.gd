@@ -173,7 +173,7 @@ func settleTurn() -> void:
 func cpuSettle(nid: int) -> void:
 	if wildCount() == 0: return
 	var na := NAT(nid)
-	var P: Dictionary = PERSONA.get(na.persona, PERSONA.bal)
+	var P: Dictionary = PERSONA.get(na.persona, PERSONA.neutral)
 	var slots: int = FRONT.settleMax - settlingOf(nid).size()
 	if slots <= 0: return
 	var war := inWar(nid)
@@ -368,7 +368,7 @@ func cedeTerrs(from: int, to: int, n: int) -> Array:
 	return out
 func cpuWarGoal(a: int, b: int) -> String:
 	var ratio := nationPower(a) / max(1.0, nationPower(b))
-	var P: Dictionary = PERSONA.get(NAT(a).persona, PERSONA.bal)
+	var P: Dictionary = PERSONA.get(NAT(a).persona, PERSONA.neutral)
 	var dv = desireVs(a, b)
 	if dv != null and dv.get("t") != null: return "claim"
 	if dv != null and dv.k == "feud": return "vassal" if ratio >= DIP.vassalWarRatio else "capital"

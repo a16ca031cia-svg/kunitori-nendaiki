@@ -283,6 +283,9 @@ func genMap(size: String) -> Dictionary:
 			if j < 0:
 				segs.append([A, B])
 				continue
+			if not borders.has(bkey(i, j)):
+				segs.append([A, B])
+				continue
 			var line: Array = borders[bkey(i, j)]
 			if i < j: segs.append(line.duplicate())
 			else:

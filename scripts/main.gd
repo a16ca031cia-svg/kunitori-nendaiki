@@ -446,7 +446,7 @@ func _renderTop() -> void:
 		if n.alive: alive += 1
 	var wars: int = S.G.wars.size()
 	var st = []
-	st.append(["ターン", "%d / %d" % [S.G.turn, S.TURN_MAX]])
+	st.append(["日付", "%s [font_size=10][color=#9b9484]%dターン[/color][/font_size]" % [S.dateStr(S.G.turn), S.G.turn]])
 	st.append(["勢力", "%d 国" % alive])
 	st.append(["戦争", _cs("%d 件" % wars, C_DANGER) if wars else _cs("なし", C_OK)])
 	var wild: int = S.wildCount()
@@ -543,7 +543,7 @@ func _syncNatPick() -> void:
 		natPickIds.append(null)
 		var jp: bool = S.G.size == "japan" and S.G.nations.size() == 47
 		var addN = func(n):
-			natPick.add_item("%s%s" % [n.name, ("（%d）" % cnt.get(n.id, 0)) if n.alive else "（滅亡）"])
+			natPick.add_item("%s%s%s" % [n.name, ("＝" + n.role) if n.get("role", "") != "" else "", ("（%d）" % cnt.get(n.id, 0)) if n.alive else "（滅亡）"])
 			natPick.set_item_disabled(natPick.item_count - 1, not n.alive)
 			natPickIds.append(n.id)
 		if jp:
@@ -648,7 +648,7 @@ func worldPanel() -> String:
 		var n = alive[i]
 		var c: int = cnt.get(n.id, 0)
 		var bar = _bar(n.color, max(1, int(round(c * 10.0 / mx))))
-		s += "[cell][color=#6f6a5e]%d[/color] [/cell][cell]%s %s[/cell][cell] %s[/cell][cell] [b]%d[/b]%s[/cell]" % [i + 1, _dot(n.color), _link("nat:%d" % n.id, _esc(n.name), _col(_rd(n.color))), bar, c, _deltaTag(_ownDelta(n.id, c))]
+		s += "[cell][color=#6f6a5e]%d[/color] [/cell][cell]%s %s[/cell][cell] %s[/cell][cell] [b]%d[/b]%s[/cell]" % [i + 1, _dot(n.color), _link("nat:%d" % n.id, _esc(n.name), _col(_rd(n.color))) + _roleTag(n), bar, c, _deltaTag(_ownDelta(n.id, c))]
 	s += "[/table]"
 	if alive.size() > 10: s += _lbl("ほか %d か国" % (alive.size() - 10))
 	s += "\n" + _lbl("戦争") + "\n"
@@ -693,7 +693,8 @@ func natPanel(nid: int) -> String:
 	var thr = int(round(S.threatOf(nid)))
 	var top = S.topThreat()
 	var s = _h3(_esc(na.name), _col(_rd(na.color)))
-	s += _chip(S.PERSONA[na.persona].n)
+	if na.get("role", "") != "": s += _chip(na.role, "e6c95a")
+	if na.has("ideo"): s += _chip(S.IDEO[na.ideo].n, _col(S.IDEO[na.ideo].c))
 	if not na.alive: s += _chip("滅亡", "c0504a")
 	if top != null and top.id == nid: s += _chip("最大の脅威", "c0504a")
 	s += "\n"
@@ -713,7 +714,7 @@ func natPanel(nid: int) -> String:
 	var fat: float = na.get("fatigue", 0)
 	rows.append(["戦争疲労", _cs("%d　%s" % [int(fat), S.fatigueLabel(fat)], C_DANGER if fat >= S.CFG.fatMid else C_BONE)])
 	rows.append(["方針", S.polOf(na).n])
-	rows.append(["気質", "[font_size=11]%s[/font_size]" % S.PERSONA[na.persona].dd])
+	rows.append(["ふるまい", "[font_size=11]%s[/font_size]" % S.PERSONA[na.persona].dd])
 	var tp: Array = S.tradePartners(nid)
 	if tp.size():
 		var nm = []
@@ -960,8 +961,9 @@ func openHelp() -> void:
 	s += "
 
 [b]国家のしくみ[/b]
-[font_size=12][color=#9b9484]・[color=#eae4d6]政体[/color]：君主制・合議制・軍政・惣国。支持の多い政体が安定度の低い時に政変で入れ替わる
-・[color=#eae4d6]安定度[/color]：高いほど生産と治安が上がる。[color=#eae4d6]戦争支持[/color]：政体ごとの値に届かないと宣戦しない（合議制は大義も要る）
+[font_size=12][color=#9b9484]・[color=#eae4d6]見立て[/color]：日本地図では47都道府県を1936年の国に見立てる（群馬＝ドイツ、北海道＝ソ連、東京＝イギリス、長野＝フランス、愛知＝イタリア、大阪＝アメリカ、福岡＝日本 …）。1ターン＝1か月
+・[color=#eae4d6]思想[/color]：民主主義・共産主義・ファシズム・非同盟。政権を握る思想で国のふるまい（攻め方・条約・同盟）が決まる。支持の多い思想が安定度の低い時に政変で政権を取る
+・[color=#eae4d6]安定度[/color]：高いほど生産と治安が上がる。[color=#eae4d6]戦争支持[/color]：思想ごとの値に届かないと宣戦しない（民主主義は大義も要る）。ファシズムは方針で領有権を主張し、併合を要求し、断られれば攻め込む
 ・[color=#eae4d6]国家方針[/color]：共通の枝（産業・軍事・政治・外交）と県ごとの固有の枝。達成すると国民精神・工場などが手に入る（G キーでツリー）
 ・[color=#eae4d6]工場[/color]：軍需工場は軍需品を作り、兵の生産に使う（足りないと兵の生産が落ちる）。民需工場はゴールドを生み、建設費を下げる[/color][/font_size]"
 	s += "
@@ -1367,6 +1369,7 @@ func _debugHash() -> void:
 			selectNation(W.a, true)
 			break
 	elif sel.is_valid_int(): selectNation(int(sel), true)
+	if q.get("focus", "") != "" and S.UI.selNat != null: openFocus(S.UI.selNat)
 	refresh()
 ## 軍団が一手動いた時：上の帯・出来事・地図の動く層だけ描き直す（右の欄は作り直さない）
 func _onBeat() -> void:
@@ -1486,6 +1489,25 @@ func _balance(runs: int, turns: int) -> void:
 		var line = "run%d T%d 宣戦=%d 交戦組=%.1f 戦争中の国=%.1f 滅亡=%d 北海道=%d位(%d領地) 上位=" % [r, S.G.turn, decl, warSum / float(turns), inwSum / float(turns), dead, hk, cnt.get(0, 0)]
 		for i in min(5, ids.size()): line += "%s%d " % [S.NAT(ids[i]).name, cnt[ids[i]]]
 		print(line)
+		var ms = "  "
+		for nm in ["群馬県", "北海道", "東京都", "長野県", "愛知県", "大阪府", "福岡県", "広島県", "京都府"]:
+			for n in S.G.nations:
+				if n.name == nm: ms += "%s:%s%s%d " % [n.get("role", ""), S.IDEO[n.ideo].n.substr(0, 2), "" if n.alive else "滅", cnt.get(n.id, 0)]
+		print(ms)
+		for F in S.G.get("factions", {}).values():
+			var mm = []
+			for m in F.members: mm.append(S.NAT(m).get("role", S.NAT(m).name))
+			print("  陣営 %s（盟主 %s）：%s" % [F.name, S.NAT(F.leader).get("role", ""), "、".join(mm)])
+		var ic = {}
+		for n in S.G.nations:
+			if n.alive: ic[n.ideo] = ic.get(n.ideo, 0) + 1
+		print("  思想 ", ic)
+		if OS.get_environment("KN_TRACE") != "":
+			var gid = -1
+			for n in S.G.nations:
+				if n.name == OS.get_environment("KN_TRACE"): gid = n.id
+			for c in S.G.chron:
+				if c.n == gid or c.s.contains(S.NAT(gid).name): print("    T%d %s" % [c.t, c.s])
 		tot.decl += decl; tot.wars += warSum / float(turns); tot.dead += dead; tot.hkRank += hk
 		tot.hkShare += cnt.get(0, 0) / float(S.G.terrs.size()); tot.topShare += cnt[ids[0]] / float(S.G.terrs.size())
 	print("AVG 宣戦=%.1f 平均戦争=%.1f 滅亡=%.1f 北海道の順位=%.1f 北海道の割合=%.2f 1位の割合=%.2f" % [tot.decl / runs, tot.wars / runs, tot.dead / runs, tot.hkRank / runs, tot.hkShare / runs, tot.topShare / runs])
@@ -1498,8 +1520,8 @@ func _hoiPanel(nid: int) -> String:
 	var na = S.NAT(nid)
 	if not na.has("ideo"): return ""
 	var I = S.IDEO[na.ideo]
-	var s = "\n" + _lbl("国家") + "\n"
-	s += "[b][color=%s]%s[/color][/b]　[font_size=11][color=#9b9484]%s[/color][/font_size]\n" % [I.c, I.n, I.d]
+	var s = "\n" + _lbl("政権と思想の支持") + "\n"
+	s += "[b][color=%s]%s 政権[/color][/b][font_size=11][color=#9b9484]%s[/color][/font_size]\n" % [I.c, I.n, I.d]
 	var keys = S.IDEO_KEYS.duplicate()
 	keys.sort_custom(func(a, b): return na.ipop[a] > na.ipop[b])
 	s += "[font_size=11]"
@@ -1510,8 +1532,16 @@ func _hoiPanel(nid: int) -> String:
 	var stc = "6d9c63" if na.stab >= 60 else ("d29b3c" if na.stab >= 40 else "c0504a")
 	rows.append(["安定度", "%s [color=#%s]%d%%[/color] [font_size=11][color=#9b9484]生産 ×%.2f[/color][/font_size]" % [_meter(na.stab, "#" + stc), stc, int(round(na.stab)), S.stabMul(na)]])
 	var ok = na.ws >= I.wsNeed
-	rows.append(["戦争支持", "%s [color=#%s]%d%%[/color] [font_size=11][color=#9b9484]宣戦に %d%% 要る%s[/color][/font_size]" % [_meter(na.ws, "#c0504a"), "e6c95a" if ok else "9b9484", int(round(na.ws)), I.wsNeed, "・大義も要る" if na.ideo == "gougi" else ""]])
+	rows.append(["戦争支持", "%s [color=#%s]%d%%[/color] [font_size=11][color=#9b9484]宣戦に %d%% 要る%s[/color][/font_size]" % [_meter(na.ws, "#c0504a"), "e6c95a" if ok else "9b9484", int(round(na.ws)), I.wsNeed, "・大義も要る" if na.ideo == "democracy" else ""]])
 	rows.append(["政治力", "%d" % int(na.pp)])
+	var gu = []
+	for g in na.get("guar", []):
+		if S.NAT(g).alive: gu.append(_natLink(g) + _roleTag(S.NAT(g)))
+	if gu.size(): rows.append(["独立の保証", "、".join(gu)])
+	var gb = []
+	for o in S.G.nations:
+		if o.alive and o.get("guar", []).has(nid): gb.append(_natLink(o.id) + _roleTag(o))
+	if gb.size(): rows.append(["保証してくれる国", "、".join(gb)])
 	var fc = S.factoryCount(nid)
 	rows.append(["工場", "軍需 %d・民需 %d　[font_size=11][color=#9b9484]建設費 ×%.2f[/color][/font_size]" % [fc[0], fc[1], S.costMul(nid)]])
 	var em: float = na.get("eqMul", 1.0)
@@ -1528,6 +1558,9 @@ func _hoiPanel(nid: int) -> String:
 			var col = "c0504a" if _spiritBad(sp.m) else "b9a2e6"
 			s += "[color=#%s]◆[/color] [b]%s[/b] [font_size=11][color=#9b9484]%s[/color][/font_size]\n" % [col, _esc(sp.n), _esc(sp.d)]
 	return s
+func _roleTag(n) -> String:
+	var r: String = n.get("role", "")
+	return " [font_size=11][color=#c9b98a]%s[/color][/font_size]" % r if r != "" else ""
 func _spiritBad(m: Dictionary) -> bool:
 	var v = 0.0
 	for k in m:
@@ -1566,12 +1599,13 @@ func openFocus(nid: int) -> void:
 		info.text = t
 	ft.picked.connect(show)
 	if na.focus.cur != null: show.call(na.focus.cur)
-	else: info.text = "[color=#9b9484]方針を押すと効果が出ます。方針は CPU が国の気質・情勢・政体を見て選び、決まったターン数で達成します。[/color]"
+	else: info.text = "[color=#9b9484]方針を押すと効果が出ます。方針は CPU が政権の思想・情勢を見て選び、決まったターン数で達成します。[/color]"
 	vb.add_child(info)
 	var head = "[font_size=12][color=#9b9484]%s ／ %s ／ 達成 %d[/color][/font_size]" % [S.IDEO[na.ideo].n, "取り組み中：" + S.focusById(na, na.focus.cur).n if na.focus.cur != null else "取り組み中の方針なし", na.focus.done.size()]
 	var hl = _rtl()
 	hl.text = head
 	vb.add_child(hl)
 	vb.move_child(hl, 0)
-	modal("%s の国家方針" % na.name, vb, [_btn("閉じる", closeModal, true)], min(size.x - 24, ft.custom_minimum_size.x + 40))
+	vb.move_child(info, 1)
+	modal("%s%s の国家方針" % [na.name, ("（%s）" % na.role) if na.get("role", "") != "" else ""], vb, [_btn("閉じる", closeModal, true)], min(size.x - 24, ft.custom_minimum_size.x + 40))
 	_modalKey = "focus:%d" % nid

@@ -18,6 +18,7 @@ func _resetCaches() -> void:
 	NBR = null; NBR_G = null; SEGN_DONE = null; COAST_G = null; HOP_G = null; ADJ_G = null
 	PW_KEY = ""; THR_KEY = ""; DG_KEY = ""; SUP_TERR_KEY = ""; SUP_DIRTY = true
 	FOCUS_CACHE = {}; SPROG_MEMO = {}; DIPQ = []
+	_treeCache = {}
 func beginGame() -> void:
 	_resetCaches()
 	UI.sel = null; UI.selArmy = null; UI.selRoad = null; UI.busy = false; UI.auto = false; UI.selNat = null
@@ -144,7 +145,10 @@ func loadSlot(i: int) -> bool:
 			g.terrs[k].sn = m.terrs[k].sn
 		g.edges = m.edges
 		g.nb = m.nb
-	if g.nations.size() and not g.nations[0].has("ideo"): hoiInit(g)
+	if g.nations.size() and not IDEO.has(g.nations[0].get("ideo", "")):
+		for n in g.nations:
+			n.erase("ideo")
+		hoiInit(g)
 	resetColors(g.get("ncol", null))
 	stopAuto()
 	G = g

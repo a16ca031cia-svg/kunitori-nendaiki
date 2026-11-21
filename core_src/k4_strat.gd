@@ -174,7 +174,7 @@ func cpuDiplomacy(nid: int) -> void:
 	cpuAid(nid)
 	if cpuAnnex(nid): return
 	cpuVassalOffer(nid)
-	var P: Dictionary = PERSONA.get(na.persona, PERSONA.bal)
+	var P: Dictionary = PERSONA.get(na.persona, PERSONA.neutral)
 	var top = topThreat()
 	var iAmTop: bool = top != null and top.id == nid
 	var myTgt := {}
@@ -269,6 +269,7 @@ func cpuDiplomacy(nid: int) -> void:
 		var vsTop: bool = top != null and not iAmTop and top.id != o.id and natHops(nid, top.id) <= DIP.reach and natHops(o.id, top.id) <= DIP.reach
 		if not common and not vsTop: continue
 		if allyDrags(nid, o.id): continue
+		if not ideoCompat(nid, o.id): continue
 		var need: float = DIP.allyMin - (8 if common else 0) - (DIP.threatAllyEase if vsTop else 0)
 		var need2: float = need - 6 if vsTop and nationsAdjacent(nid, top.id) else need
 		if favorOf(nid, o.id) < need2: continue
@@ -289,10 +290,12 @@ func cpuDiplomacy(nid: int) -> void:
 		var sm2 := smartAI(nid)
 		var mine2: float = atkCoalition(nid, o.id) if sm2 else nationPower(nid)
 		var th2: float = defCoalition(nid, o.id) if sm2 else max(1.0, nationPower(o.id))
-		if mine2 < th2 * (0.85 if sm2 else 0.7) or na.get("fatigue", 0) >= DIP.fatiguePeace:
+		var forced: bool = na.get("forceWar", -1) == o.id and mine2 >= th2 * 0.45
+		if (not forced and mine2 < th2 * ((0.6 if na.persona == "fascism" else 0.85) if sm2 else 0.7)) or na.get("fatigue", 0) >= DIP.fatiguePeace:
 			cancelWarPrep(nid, o.id)
 			G.dip.cool[nid][o.id] = G.turn + 5; G.dip.cool[o.id][nid] = G.turn + 5
 			continue
+		na.forceWar = -1
 		declareWar(nid, o.id)
 		return
 	_tp("prep")
@@ -319,7 +322,8 @@ func cpuDiplomacy(nid: int) -> void:
 		if DESIRE[d.k].war or d.k == "protect": wantWar = true
 		if d.k == "guard": guarding = true
 	var chanceMul: float = DES.warChanceMul if wantWar else (0.4 if guarding else (DES.noWishMul if G.nations.size() > 16 else 0.8))
-	if randf() > DIP.cpuWarChance.get(na.persona, 0.2) * crowdMul() * chanceMul: return
+	var fasc: bool = na.persona == "fascism"
+	if randf() > DIP.cpuWarChance.get(na.persona, 0.2) * (max(0.7, crowdMul()) if fasc else crowdMul()) * (max(1.0, chanceMul) if fasc else chanceMul): return
 	var mine := nationPower(nid)
 	var ambition: float = min(DIP.cpuAmbitionMax, G.turn * DIP.cpuAmbition)
 	var needW: float = DIP.cpuWarNeed.get(na.persona, 34)
@@ -334,9 +338,9 @@ func cpuDiplomacy(nid: int) -> void:
 		var th: float = defCoalition(nid, o.id) if sm else max(1.0, nationPower(o.id))
 		var mineC: float = atkCoalition(nid, o.id) if sm else mine
 		var cb := hasCB(nid, o.id)
-		if not cb and na.get("ideo") == "gougi": continue
+		if not cb and na.get("ideo") == "democracy": continue
 		if not cb and not (mineC >= th * 1.8 and randf() < P.noCB): continue
-		if sm and mineC < th * 0.95: continue
+		if sm and mineC < th * (0.7 if fasc else 0.95): continue
 		var sc: float = (mineC / th - 1) * 100 + (60 - favorOf(nid, o.id)) + ambition \
 			+ (15 if sm and busyFrac(o.id) > 0.2 else 0) \
 			+ threatOf(o.id) * DIP.threatWarBonus - danger * DIP.dangerWeight
@@ -344,6 +348,7 @@ func cpuDiplomacy(nid: int) -> void:
 		if isTopThreat(o.id): sc += 20
 		if isTrade(nid, o.id): sc -= 15
 		if not cb: sc -= 15
+		elif fasc: sc += 25
 		if dv != null: sc += 10 if dv.k == "guard" else DES.warBonus
 		if sc >= needW: cand.append({"id": o.id, "sc": sc})
 	if cand.is_empty():
@@ -382,7 +387,7 @@ func cpuPeaceTies(nid: int, P: Dictionary) -> void:
 		cs2.sort_custom(func(x, y): return nationPower(x.id) > nationPower(y.id))
 		if cs2.size():
 			var o = cs2[0]
-			var greedy: bool = o.persona == "aggr" and nationPower(o.id) > mine * 1.3
+			var greedy: bool = (o.persona == "aggr" or o.persona == "fascism") and nationPower(o.id) > mine * 1.3
 			if favorOf(o.id, nid) >= pactNeed(o.id) and not greedy: makePact(nid, o.id)
 func cpuFabricate(nid: int, P: Dictionary, mine: float) -> void:
 	if not (P.fab > 0) or randf() > P.fab * crowdMul(): return
@@ -412,8 +417,8 @@ func cpuVassal(nid: int, lord: int) -> void:
 	for o in G.nations:
 		if o.alive and atWar(lord, o.id) and o.id != nid: lordWar += 1
 	var ch := 0.12 + clamp_f(pw - 0.5, 0, 1.2) * 0.5 + lordWar * 0.12
-	if na.persona == "aggr": ch += 0.12
-	if na.persona == "econ": ch -= 0.06
+	if na.persona == "aggr" or na.persona == "fascism": ch += 0.12
+	if na.persona == "econ" or na.persona == "neutral": ch -= 0.06
 	if hasDesire(nid, "indep"): ch += 0.15
 	if randf() < ch: startRevolt(nid)
 func cpuVassalOffer(nid: int) -> void:
