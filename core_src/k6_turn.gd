@@ -680,7 +680,7 @@ func cpuTurn(nid: int) -> void:
 	await yieldMaybe()
 	var maxA := int(clamp_f(2 + own.size() / 3 + P.army * 2, 1, ARMY_MAX))
 	var stockTot := total(na.stock)
-	var goalT: float = clamp_f(3500 + own.size() * 700, 3500, 34000) * P.goal
+	var goalT: float = clamp_f(3500 + own.size() * 700, 3500, 34000) * P.goal * (1.0 + nmod(nid, "cap"))
 	if armed < maxA and stockTot > 3000:
 		var slot: int = na.armies.find(null)
 		if slot >= 0:

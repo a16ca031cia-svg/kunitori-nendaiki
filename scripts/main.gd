@@ -91,6 +91,8 @@ func _ready() -> void:
 	S.bootMark("タイトル画面が描かれた")
 	_prefetchJpMaps()
 	if args.has("--autostart"): _newGame("japan")
+	# 確認用：URL に mute を付けると音を消す（保存した好みは変えない）
+	if OS.has_feature("web") and str(JavaScriptBridge.eval("location.hash", true)).contains("mute"): AudioServer.set_bus_mute(0, true)
 	if OS.has_feature("web"): _debugHash()
 	var pc = args.find("--pace")
 	if pc >= 0:
@@ -345,6 +347,7 @@ func _layout() -> void:
 # ============================================================
 var _sizeSel = "japan"
 func _showTitle() -> void:
+	_titleBgm()
 	if titleScr != null: titleScr.queue_free()
 	S.stopAuto()
 	titleScr = Control.new()
@@ -430,6 +433,9 @@ func _showTitle() -> void:
 	help.add_theme_color_override("font_color", Color("#6f6a5e"))
 	help.add_theme_font_size_override("font_size", 12)
 	box.add_child(help)
+func _titleBgm() -> void:
+	await get_tree().process_frame
+	_updateBgm(true)
 func _hideTitle() -> void:
 	if titleScr != null:
 		titleScr.queue_free()
@@ -1653,9 +1659,11 @@ func _fetchBgm(k: String) -> void:
 	req.accept_gzip = false
 	req.request_completed.connect(func(result, code, _h, body):
 		req.queue_free()
+		S.bootMark("曲 %s 取得 結果=%d コード=%d 大きさ=%d" % [k, result, code, body.size()])
 		if result != HTTPRequest.RESULT_SUCCESS or code != 200: return
 		var st = AudioStreamOggVorbis.load_from_buffer(body)
 		if st == null: return
+		S.bootMark("曲 %s 読み込み完了" % k)
 		st.loop = true
 		_bgm[k] = st
 		_updateBgm(true))
@@ -1675,7 +1683,10 @@ func _sfx(name: String, db := 0.0) -> void:
 func _updateBgm(force := false) -> void:
 	if _bgmPlayers.is_empty(): return
 	var want = ""
-	if S.UI.get("bgm", true) and S.G != null and titleScr == null:
+	if S.UI.get("bgm", true) and (S.G == null or titleScr != null):
+		# タイトル画面でも平時の曲を流す
+		want = "peace" if _bgm.has("peace") else ""
+	elif S.UI.get("bgm", true):
 		var sel = S.UI.selNat
 		var war: bool = S.inWar(sel) if sel != null and sel >= 0 else S.G.wars.size() >= max(3, S.G.nations.size() / 8)
 		want = "war" if war else "peace"
@@ -1693,6 +1704,7 @@ func _updateBgm(force := false) -> void:
 		nxt.stream = _bgm[want]
 		nxt.volume_db = -40.0
 		nxt.play()
+		S.bootMark("曲 %s を流し始めた" % want)
 		tw.tween_property(nxt, "volume_db", -8.0 if want == "peace" else -13.0, 1.5)
 	tw.chain().tween_callback(func(): if cur.volume_db <= -79.0: cur.stop())
 
@@ -1708,6 +1720,14 @@ func _balance(runs: int, turns: int) -> void:
 		var inwSum = 0
 		for k in turns:
 			await S.endTurn()
+			if OS.get_environment("KN_TRACE") != "" and S.G.turn % 10 == 0:
+				var tn = -1
+				for n in S.G.nations:
+					if n.name == OS.get_environment("KN_TRACE"): tn = n.id
+				var ln = "  兵力 T%d " % S.G.turn
+				for n in S.G.nations:
+					if n.alive and (n.id == tn or S.nationsAdjacent(tn, n.id)): ln += "%s%s:兵%d万・国力%d万%s　" % [n.name.substr(0, 2), ("(" + n.get("role", "") + ")") if n.id == tn else "", S.nationTroops(n.id) / 10000, S.nationPower(n.id) / 10000, "【戦争中】" if S.atWar(tn, n.id) else ""]
+				print(ln)
 			var pr = 0
 			var inw = 0
 			for x in S.G.nations:
@@ -1869,7 +1889,7 @@ func _armyEval(runs: int, turns: int, seedBase := 7000) -> void:
 	S.CFG.showDip = false
 	S.CFG.showCpuBattle = false
 	S.setSpeed(3, false)
-	var T0 = {"moves": 0, "peace": 0, "peaceOld": 0, "leave": 0, "back": 0, "waste": 0, "idleWar": 0, "cap": 0, "warTurns": 0, "armyTurns": 0, "loop": 0}
+	var T0 = {"frontN": 0, "frontCov": 0, "moves": 0, "peace": 0, "peaceOld": 0, "leave": 0, "back": 0, "waste": 0, "idleWar": 0, "cap": 0, "warTurns": 0, "armyTurns": 0, "loop": 0}
 	var capN = [0]
 	S.captured.connect(func(_t, _n, _o): capN[0] += 1)
 	for r in runs:
@@ -1885,7 +1905,7 @@ func _armyEval(runs: int, turns: int, seedBase := 7000) -> void:
 		var LW = {}
 		var PST = {}
 		var BORN = {}
-		var R = {"moves": 0, "peace": 0, "peaceOld": 0, "leave": 0, "back": 0, "waste": 0, "idleWar": 0, "warTurns": 0, "armyTurns": 0, "loop": 0}
+		var R = {"frontN": 0, "frontCov": 0, "moves": 0, "peace": 0, "peaceOld": 0, "leave": 0, "back": 0, "waste": 0, "idleWar": 0, "warTurns": 0, "armyTurns": 0, "loop": 0}
 		for k in turns:
 			await S.endTurn()
 			if S.G.over != null: break
@@ -1896,6 +1916,19 @@ func _armyEval(runs: int, turns: int, seedBase := 7000) -> void:
 				for o in S.G.nations:
 					if o.alive and o.id != na.id and S.isTense(na.id, o.id): tense = true
 				if war: R.warTurns += 1
+				if war:
+					# 前線の手当て：敵軍が隣にいる自国の領地のうち、味方の軍がいる割合
+					for t in S.ownList(na.id):
+						var thr := false
+						for nb in S.roadNbrs(t.id):
+							var o: int = S.T(nb.to).owner
+							if o >= 0 and S.atWar(na.id, o) and S._foeArmyAt(nb.to, na.id): thr = true
+						if not thr: continue
+						R.frontN += 1
+						for x in S.armiesAt(t.id):
+							if x.owner == na.id and S.total(x.t) > 0:
+								R.frontCov += 1
+								break
 				for a in na.armies:
 					if a == null or S.total(a.t) <= 0: continue
 					R.armyTurns += 1
@@ -1956,6 +1989,7 @@ func _armyEval(runs: int, turns: int, seedBase := 7000) -> void:
 	var score: float = (T0.leave * 2.0 + T0.back * 3.0 + T0.loop * 2.0 + T0.waste * 2.0 + T0.idleWar * 1.0) / at * 100.0
 	print("SUM 移動=%d 平時=%d 平時の古い軍=%d 持ち場を離れる=%d 行き戻り=%d 輪=%d 変更=%d 棒立ち=%d 占領=%d 戦国ターン=%d 軍ターン=%d" % [T0.moves, T0.peace, T0.peaceOld, T0.leave, T0.back, T0.loop, T0.waste, T0.idleWar, T0.cap, T0.warTurns, T0.armyTurns])
 	print("SCORE 無駄=%.2f（軍100ターンあたり・小さいほど良い） 占領/戦争100国ターン=%.1f" % [score, T0.cap / wt * 100.0])
+	print("SCORE3 前線の手当て=%.2f（敵軍が隣にいる前線の領地に味方がいる割合） 取られた領地=%d" % [T0.frontCov / max(1.0, float(T0.frontN)), T0.cap])
 	print("SCORE2 戦時の無駄=%.2f（戦争1国ターンあたり） 平時の無駄=%.3f（軍100ターンあたり）" % [(T0.back * 3.0 + T0.loop * 2.0 + T0.waste * 2.0 + T0.idleWar) / wt, T0.leave * 2.0 / at * 100.0])
 ## 守備の持ち場（国境の要所・首都）にいるか
 func _atPost(a, nid: int) -> bool:

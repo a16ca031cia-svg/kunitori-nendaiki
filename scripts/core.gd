@@ -1,4 +1,4 @@
-# 自動生成：core_src/*.gd をまとめたもの（直接編集しない。tools/build_core.sh か publish.ps1 で作り直す）
+# 自動生成：core_src/*.gd をまとめたもの（直接編集しない。tools/build_core.sh で作り直す）
 extends Node
 
 # ==================== k0_base.gd ====================
@@ -180,10 +180,11 @@ func logMsg(s: String, cls := "") -> void:
 func notify(msg: String, cls := "") -> void:
 	notified.emit(msg, cls)
 	if G != null: logMsg(msg, "war" if cls == "err" else cls)
+var CHRON_BIG: bool = OS.get_environment("KN_TRACE") != ""
 func chron(text: String, nid = null, kind := "") -> void:
 	if G == null or not G.has("chron"): return
 	G.chron.append({"t": G.turn, "s": text, "n": -1 if nid == null else nid, "k": kind})
-	if G.chron.size() > 800: G.chron.pop_front()
+	if G.chron.size() > (20000 if CHRON_BIG else 800): G.chron.pop_front()
 
 func genOf(na: Dictionary, gid):
 	if gid == null: return null
@@ -3059,6 +3060,7 @@ func cpuFaction(nid: int) -> void:
 				if DESIRE[d.k].war and F.members.has(desireNat(d)):
 					sc -= 40
 					break
+			if not facFit(o.id, F.leader): sc = -999
 			if sc >= 20:
 				joinFaction(F, o.id)
 				dipReport("faction", nid, o.id, true, "「%s」への招待に応じた" % F.name)
@@ -3083,6 +3085,8 @@ func factionCallToArms(a: int, b: int) -> void:
 	if Fb != null:
 		for m in Fb.members.duplicate():
 			if m == b or not NAT(m).alive or atWar(m, a) or sameFaction(m, a): continue
+			# 敵から遠い加盟国は戦わない（遠くの国まで一斉に参戦する連鎖を防ぐ）
+			if not natNear(m, a): continue
 			enterWar(m, a, "「%s」の加盟国 %s を守るため参戦" % [Fb.name, NAT(b).name], wid)
 	var Fa = facOf(a)
 	if Fa != null:
@@ -3333,9 +3337,11 @@ func cpuDiplomacy(nid: int) -> void:
 		var dg = cpuDanger(nid)
 		var Wp = warObj(nid, o.id)
 		var nearCap: bool = Wp != null and surrenderProg(Wp, nid) >= surrenderLimit(nid) * 0.7
-		var wantPeace: bool = goalDone(nid, o.id) or nearCap or mine < theirs * 0.8 or fat >= DIP.fatiguePeace or dg >= 0.9 \
+		var fascP: bool = na.get("ideo") == "fascism"
+		# ファシズムの国は負けていても粘る（国力が相手の5割を切るまで講和に応じにくい）
+		var wantPeace: bool = goalDone(nid, o.id) or nearCap or mine < theirs * (0.5 if fascP else 0.8) or fat >= DIP.fatiguePeace or dg >= 0.9 \
 			or (dg >= 0.6 and not isTopThreat(o.id)) \
-			or randf() < 0.08 + fat / 400.0 + P.peaceW + ((G.turn - Wp.t0) / 80.0 if Wp != null else 0.0)
+			or randf() < (0.08 + fat / 400.0 + P.peaceW + ((G.turn - Wp.t0) / 80.0 if Wp != null else 0.0)) * (0.4 if fascP else 1.0)
 		if not wantPeace: continue
 		var terms = cpuPeaceTerms(nid, o.id)
 		G.dip.peaceAt[nid][o.id] = G.turn; G.dip.peaceAt[o.id][nid] = G.turn
@@ -3483,7 +3489,7 @@ func cpuPeaceTies(nid: int, P: Dictionary) -> void:
 		var cs2 = []
 		for x in G.nations:
 			if x.alive and x.id != nid and relState(nid, x.id) == "peace" and pactLeft(nid, x.id) <= 0 and nationsAdjacent(nid, x.id) \
-					and not hasCB(nid, x.id) and favorOf(nid, x.id) >= pactNeed(nid) - 10 \
+					and not hasCB(nid, x.id) and not wantsLand(nid, x.id) and not wantsLand(x.id, nid) and favorOf(nid, x.id) >= pactNeed(nid) - 10 \
 					and (nationPower(x.id) > mine * 0.9 or war or cpuDanger(nid) >= 0.6):
 				cs2.append(x)
 		cs2.sort_custom(func(x, y): return nationPower(x.id) > nationPower(y.id))
@@ -3662,7 +3668,7 @@ func _natPop(nid: int) -> float:
 	var pop = 0.0
 	for t in ownList(nid): pop += t.pop
 	return pop
-func stockCap(nid: int) -> int: return int(round(_natPop(nid) * CFG.stockCapPop))
+func stockCap(nid: int) -> int: return int(round(_natPop(nid) * CFG.stockCapPop * (1.0 + nmod(nid, "cap"))))
 func levyRoom(t: Dictionary) -> int: return max(0, int(round(t.pop - popCap(t) * CFG.levyFloor)))
 func foodNeed(nid: int) -> int: return int(round(_natPop(nid) / 1000.0 * CFG.foodPop + nationTroops(nid) / 1000.0 * CFG.foodTroop))
 func isStarving(na: Dictionary) -> bool: return na.food <= 0
@@ -4669,7 +4675,7 @@ func cpuTurn(nid: int) -> void:
 	await yieldMaybe()
 	var maxA = int(clamp_f(2 + own.size() / 3 + P.army * 2, 1, ARMY_MAX))
 	var stockTot = total(na.stock)
-	var goalT: float = clamp_f(3500 + own.size() * 700, 3500, 34000) * P.goal
+	var goalT: float = clamp_f(3500 + own.size() * 700, 3500, 34000) * P.goal * (1.0 + nmod(nid, "cap"))
 	if armed < maxA and stockTot > 3000:
 		var slot: int = na.armies.find(null)
 		if slot >= 0:
@@ -5317,6 +5323,13 @@ func hoiInit(g: Dictionary) -> void:
 		na.focus = {"cur": null, "prog": 0, "done": []}
 		if cd != null:
 			for sp in cd.sp: _addSpirit(na, sp[0], sp[1], sp[2], "固有")
+			# 開始時の底上げ（大国の工業力・兵の蓄え）
+			var bo = cd.get("boost", {})
+			if bo.has("stock"):
+				for k in na.stock: na.stock[k] = int(na.stock[k] * bo.stock)
+			if bo.has("dev"):
+				for t in g.terrs:
+					if t.owner == na.id and t.type == "city": t.dev = min(5, t.dev + int(bo.dev))
 		elif gen.size(): _addSpirit(na, gen[na.id % gen.size()][0], gen[na.id % gen.size()][1], gen[na.id % gen.size()][2], "固有")
 		hoiRecalc(na)
 		na.stab = clamp_f(na.stab + na.mods.get("stab", 0.0), 5, 95)
@@ -5426,6 +5439,15 @@ func hoiTurn(nid: int) -> void:
 	var _h0 = Time.get_ticks_usec()
 	var war = inWar(nid)
 	var dg = cpuDanger(nid)
+	# 戦争中に達成した開戦の方針は、戦争が終わってから
+	var pw = na.get("pendingWar", -1)
+	if pw >= 0 and not war:
+		na.pendingWar = -1
+		if NAT(pw).alive and nationsAdjacent(nid, pw) and canPrepare(nid, pw) and hoiWarOK(nid, pw):
+			_turnOn(nid, pw)
+			grantCB(nid, pw, "持ち越した開戦の方針", 40)
+			startWarPrep(nid, pw)
+			na.forceWar = pw
 	var _h1 = Time.get_ticks_usec()
 	PROF["hoi:危険度"] = PROF.get("hoi:危険度", 0) + _h1 - _h0
 	# 政治力
@@ -5691,6 +5713,7 @@ func _applyFocus(na: Dictionary, f: Dictionary) -> void:
 			if not inWar(nid) and nationsAdjacent(nid, o) and canPrepare(nid, o) and hoiWarOK(nid, o):
 				startWarPrep(nid, o)
 				na.forceWar = o
+			elif inWar(nid): na.pendingWar = o   # 戦争中なら、終わってから
 	nations_changed.emit()
 ## 併合・従属の要求（アンシュルス・ズデーテンなど）。断られたら大義を得る
 func _demand(na: Dictionary, o: int, why: String) -> void:
@@ -5820,8 +5843,15 @@ func pactOK(a: int, b: int) -> bool:
 	if NAT(a).get("ideo") == "fascism" and hasCB(a, b): return false
 	if NAT(b).get("ideo") == "fascism" and hasCB(b, a): return false
 	return true
+## ファシズムの国が方針で狙った相手か（その相手とは不可侵条約を結ばない）
+func wantsLand(a: int, b: int) -> bool:
+	return NAT(a).get("ideo") == "fascism" and NAT(a).get("claimT", []).has(b)
 ## 方針で狙う相手とは同盟・条約を解く
 func _turnOn(nid: int, o: int) -> void:
+	var ct: Array = NAT(nid).get("claimT", [])
+	if not ct.has(o):
+		ct.append(o)
+		NAT(nid).claimT = ct
 	if isAlly(nid, o) and not isVassal(o, nid) and not isVassal(nid, o): breakAlly(nid, o)
 	if pactLeft(nid, o) > 0:
 		G.dip.pact[nid][o] = 0; G.dip.pact[o][nid] = 0
@@ -5890,8 +5920,8 @@ const TREE_GER := [
 	{"id": "g2", "n": "全権委任法", "w": 5.0, "x": 1, "y": 1, "t": 6, "req": ["g1"], "ex": ["g2b", "g2c"], "e": {"gov": "fascism", "stab": 10}},
 	{"id": "g2b", "n": "共和国の堅持", "x": 3, "y": 1, "t": 6, "req": ["g1"], "ex": ["g2", "g2c"], "e": {"ideo": ["democracy", 25], "stab": 15}},
 	{"id": "g2c", "n": "労働者の蜂起", "x": 4, "y": 1, "t": 6, "req": ["g1"], "ex": ["g2", "g2b"], "e": {"gov": "communism", "stab": -10}},
-	{"id": "g3", "n": "再軍備宣言", "x": 0, "y": 2, "t": 7, "req": ["g2"], "e": {"rm": "ヴェルサイユの軛", "mf": 2, "sp": ["再軍備", "兵の生産 +25%・軍需工場の出力 +15%", {"troop": 0.25, "mf": 0.15}]}},
-	{"id": "g4", "n": "ラインラント進駐", "x": 1, "y": 2, "t": 5, "req": ["g2"], "e": {"ws": 15, "stab": 5, "sp": ["電撃戦ドクトリン", "攻撃 +10%", {"atk": 0.10}]}},
+	{"id": "g3", "n": "再軍備宣言", "x": 0, "y": 2, "t": 7, "req": ["g2"], "e": {"rm": "ヴェルサイユの軛", "mf": 2, "sp": ["再軍備", "兵の生産 +25%・軍需工場の出力 +15%・兵の上限 +50%", {"troop": 0.25, "mf": 0.15, "cap": 0.50}]}},
+	{"id": "g4", "n": "ラインラント進駐", "x": 1, "y": 2, "t": 5, "req": ["g2"], "e": {"ws": 15, "stab": 5, "sp": ["電撃戦ドクトリン", "攻撃 +15%", {"atk": 0.15}]}},
 	{"id": "g5", "n": "アンシュルス", "x": 0, "y": 3, "t": 6, "req": ["g3"], "e": {"demand": ["新潟県"]}},
 	{"id": "g6", "n": "枢軸の結成", "x": 1, "y": 3, "t": 6, "req": ["g4"], "e": {"fac": "枢軸", "ws": 5}},
 	{"id": "g7", "n": "ズデーテン問題", "x": 0, "y": 4, "t": 6, "req": ["g5"], "e": {"demand": ["栃木県"]}},
@@ -5994,18 +6024,18 @@ const TREE_SPA := [
 const COUNTRY := {
 	"北海道": {"r": "ソ連", "ideo": "communism", "pop": {"fascism": 3, "democracy": 5, "neutral": 7}, "tree": TREE_SOV,
 		"sp": [["広大な凍土", "人口上限 -20%・食料 -25%・兵の生産 -10%・ゴールド -15%", {"pop": -0.2, "food": -0.25, "troop": -0.1, "gold": -0.15}], ["大粛清の影", "攻撃 -10%・安定度 -10", {"atk": -0.10, "stab": -10.0}]]},
-	"群馬県": {"r": "ドイツ", "ideo": "democracy", "pop": {"fascism": 42, "communism": 12, "neutral": 8}, "stab": -12, "tree": TREE_GER,
-		"sp": [["列強", "ゴールド +15%・兵の生産 +15%・軍需工場の出力 +10%", {"gold": 0.15, "troop": 0.15, "mf": 0.10}], ["プロイセンの伝統", "攻撃 +10%・防御 +5%", {"atk": 0.10, "def": 0.05}], ["ヴェルサイユの軛", "兵の生産 -15%・軍需工場の出力 -10%", {"troop": -0.15, "mf": -0.10}], ["恐慌の傷跡", "安定度 -5・ゴールド -5%", {"stab": -5.0, "gold": -0.05}]]},
+	"群馬県": {"r": "ドイツ", "ideo": "democracy", "pop": {"fascism": 42, "communism": 12, "neutral": 8}, "stab": -12, "boost": {"dev": 1, "stock": 3.0}, "tree": TREE_GER,
+		"sp": [["列強", "ゴールド +15%・兵の生産 +15%・軍需工場の出力 +10%・兵の上限 +25%", {"gold": 0.15, "troop": 0.15, "mf": 0.10, "cap": 0.25}], ["プロイセンの伝統", "攻撃 +25%・防御 +15%", {"atk": 0.25, "def": 0.15}], ["工業大国", "軍需工場の出力 +20%・民需工場の出力 +10%・ゴールド +10%", {"mf": 0.20, "cf": 0.10, "gold": 0.10}], ["ヴェルサイユの軛", "兵の生産 -15%・軍需工場の出力 -10%", {"troop": -0.15, "mf": -0.10}], ["恐慌の傷跡", "安定度 -5・ゴールド -5%", {"stab": -5.0, "gold": -0.05}]]},
 	"東京都": {"r": "イギリス", "ideo": "democracy", "pop": {"fascism": 4, "communism": 6, "neutral": 10}, "tree": TREE_UK,
-		"sp": [["列強", "ゴールド +15%・兵の生産 +15%・軍需工場の出力 +10%", {"gold": 0.15, "troop": 0.15, "mf": 0.10}], ["大英帝国", "ゴールド +10%", {"gold": 0.10}], ["宥和の空気", "戦争支持 -10", {"ws": -10.0}]]},
+		"sp": [["列強", "ゴールド +15%・兵の生産 +15%・軍需工場の出力 +10%・兵の上限 +25%", {"gold": 0.15, "troop": 0.15, "mf": 0.10, "cap": 0.25}], ["大英帝国", "ゴールド +10%", {"gold": 0.10}], ["宥和の空気", "戦争支持 -10", {"ws": -10.0}]]},
 	"長野県": {"r": "フランス", "ideo": "democracy", "pop": {"fascism": 8, "communism": 18, "neutral": 8}, "tree": TREE_FRA,
-		"sp": [["列強", "ゴールド +15%・兵の生産 +15%・軍需工場の出力 +10%", {"gold": 0.15, "troop": 0.15, "mf": 0.10}], ["政治の混迷", "安定度 -10", {"stab": -10.0}], ["マジノ線", "砦の防御 +20%", {"fort": 0.20}]]},
+		"sp": [["列強", "ゴールド +15%・兵の生産 +15%・軍需工場の出力 +10%・兵の上限 +25%", {"gold": 0.15, "troop": 0.15, "mf": 0.10, "cap": 0.25}], ["政治の混迷", "安定度 -10", {"stab": -10.0}], ["マジノ線", "砦の防御 +20%", {"fort": 0.20}]]},
 	"愛知県": {"r": "イタリア", "ideo": "fascism", "pop": {"democracy": 6, "communism": 6, "neutral": 15}, "tree": TREE_ITA,
-		"sp": [["列強", "ゴールド +15%・兵の生産 +15%・軍需工場の出力 +10%", {"gold": 0.15, "troop": 0.15, "mf": 0.10}], ["ローマの夢", "戦争支持 +10", {"ws": 10.0}], ["貧弱な工業", "軍需工場の出力 -15%", {"mf": -0.15}]]},
+		"sp": [["列強", "ゴールド +15%・兵の生産 +15%・軍需工場の出力 +10%・兵の上限 +25%", {"gold": 0.15, "troop": 0.15, "mf": 0.10, "cap": 0.25}], ["ローマの夢", "戦争支持 +10", {"ws": 10.0}], ["貧弱な工業", "軍需工場の出力 -15%", {"mf": -0.15}]]},
 	"大阪府": {"r": "アメリカ", "ideo": "democracy", "pop": {"fascism": 4, "communism": 4, "neutral": 6}, "tree": TREE_USA,
-		"sp": [["列強", "ゴールド +15%・兵の生産 +15%・軍需工場の出力 +10%", {"gold": 0.15, "troop": 0.15, "mf": 0.10}], ["孤立主義", "戦争支持 -20", {"ws": -20.0}], ["大恐慌", "ゴールド -15%・安定度 -10", {"gold": -0.15, "stab": -10.0}]]},
+		"sp": [["列強", "ゴールド +15%・兵の生産 +15%・軍需工場の出力 +10%・兵の上限 +25%", {"gold": 0.15, "troop": 0.15, "mf": 0.10, "cap": 0.25}], ["孤立主義", "戦争支持 -20", {"ws": -20.0}], ["大恐慌", "ゴールド -15%・安定度 -10", {"gold": -0.15, "stab": -10.0}]]},
 	"福岡県": {"r": "日本", "ideo": "neutral", "pop": {"fascism": 35, "democracy": 12, "communism": 3}, "tree": TREE_JPN,
-		"sp": [["列強", "ゴールド +15%・兵の生産 +15%・軍需工場の出力 +10%", {"gold": 0.15, "troop": 0.15, "mf": 0.10}], ["軍部の専横", "戦争支持 +10・安定度 -5", {"ws": 10.0, "stab": -5.0}]]},
+		"sp": [["列強", "ゴールド +15%・兵の生産 +15%・軍需工場の出力 +10%・兵の上限 +25%", {"gold": 0.15, "troop": 0.15, "mf": 0.10, "cap": 0.25}], ["軍部の専横", "戦争支持 +10・安定度 -5", {"ws": 10.0, "stab": -5.0}]]},
 	"広島県": {"r": "中華民国", "ideo": "neutral", "pop": {"communism": 18, "democracy": 10, "fascism": 6}, "tree": TREE_CHN,
 		"sp": [["軍閥の割拠", "安定度 -10・ゴールド -10%", {"stab": -10.0, "gold": -0.10}]]},
 	"京都府": {"r": "スペイン", "ideo": "democracy", "pop": {"fascism": 28, "communism": 24, "neutral": 6}, "stab": -10, "tree": TREE_SPA,

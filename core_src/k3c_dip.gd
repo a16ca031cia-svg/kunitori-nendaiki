@@ -579,6 +579,7 @@ func cpuFaction(nid: int) -> void:
 				if DESIRE[d.k].war and F.members.has(desireNat(d)):
 					sc -= 40
 					break
+			if not facFit(o.id, F.leader): sc = -999
 			if sc >= 20:
 				joinFaction(F, o.id)
 				dipReport("faction", nid, o.id, true, "「%s」への招待に応じた" % F.name)
@@ -603,6 +604,8 @@ func factionCallToArms(a: int, b: int) -> void:
 	if Fb != null:
 		for m in Fb.members.duplicate():
 			if m == b or not NAT(m).alive or atWar(m, a) or sameFaction(m, a): continue
+			# 敵から遠い加盟国は戦わない（遠くの国まで一斉に参戦する連鎖を防ぐ）
+			if not natNear(m, a): continue
 			enterWar(m, a, "「%s」の加盟国 %s を守るため参戦" % [Fb.name, NAT(b).name], wid)
 	var Fa = facOf(a)
 	if Fa != null:

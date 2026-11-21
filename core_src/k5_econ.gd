@@ -50,7 +50,7 @@ func _natPop(nid: int) -> float:
 	var pop := 0.0
 	for t in ownList(nid): pop += t.pop
 	return pop
-func stockCap(nid: int) -> int: return int(round(_natPop(nid) * CFG.stockCapPop))
+func stockCap(nid: int) -> int: return int(round(_natPop(nid) * CFG.stockCapPop * (1.0 + nmod(nid, "cap"))))
 func levyRoom(t: Dictionary) -> int: return max(0, int(round(t.pop - popCap(t) * CFG.levyFloor)))
 func foodNeed(nid: int) -> int: return int(round(_natPop(nid) / 1000.0 * CFG.foodPop + nationTroops(nid) / 1000.0 * CFG.foodTroop))
 func isStarving(na: Dictionary) -> bool: return na.food <= 0

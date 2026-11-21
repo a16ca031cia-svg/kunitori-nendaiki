@@ -46,6 +46,13 @@ func hoiInit(g: Dictionary) -> void:
 		na.focus = {"cur": null, "prog": 0, "done": []}
 		if cd != null:
 			for sp in cd.sp: _addSpirit(na, sp[0], sp[1], sp[2], "固有")
+			# 開始時の底上げ（大国の工業力・兵の蓄え）
+			var bo = cd.get("boost", {})
+			if bo.has("stock"):
+				for k in na.stock: na.stock[k] = int(na.stock[k] * bo.stock)
+			if bo.has("dev"):
+				for t in g.terrs:
+					if t.owner == na.id and t.type == "city": t.dev = min(5, t.dev + int(bo.dev))
 		elif gen.size(): _addSpirit(na, gen[na.id % gen.size()][0], gen[na.id % gen.size()][1], gen[na.id % gen.size()][2], "固有")
 		hoiRecalc(na)
 		na.stab = clamp_f(na.stab + na.mods.get("stab", 0.0), 5, 95)
@@ -155,6 +162,15 @@ func hoiTurn(nid: int) -> void:
 	var _h0 := Time.get_ticks_usec()
 	var war := inWar(nid)
 	var dg := cpuDanger(nid)
+	# 戦争中に達成した開戦の方針は、戦争が終わってから
+	var pw = na.get("pendingWar", -1)
+	if pw >= 0 and not war:
+		na.pendingWar = -1
+		if NAT(pw).alive and nationsAdjacent(nid, pw) and canPrepare(nid, pw) and hoiWarOK(nid, pw):
+			_turnOn(nid, pw)
+			grantCB(nid, pw, "持ち越した開戦の方針", 40)
+			startWarPrep(nid, pw)
+			na.forceWar = pw
 	var _h1 := Time.get_ticks_usec()
 	PROF["hoi:危険度"] = PROF.get("hoi:危険度", 0) + _h1 - _h0
 	# 政治力
@@ -420,6 +436,7 @@ func _applyFocus(na: Dictionary, f: Dictionary) -> void:
 			if not inWar(nid) and nationsAdjacent(nid, o) and canPrepare(nid, o) and hoiWarOK(nid, o):
 				startWarPrep(nid, o)
 				na.forceWar = o
+			elif inWar(nid): na.pendingWar = o   # 戦争中なら、終わってから
 	nations_changed.emit()
 ## 併合・従属の要求（アンシュルス・ズデーテンなど）。断られたら大義を得る
 func _demand(na: Dictionary, o: int, why: String) -> void:
@@ -549,8 +566,15 @@ func pactOK(a: int, b: int) -> bool:
 	if NAT(a).get("ideo") == "fascism" and hasCB(a, b): return false
 	if NAT(b).get("ideo") == "fascism" and hasCB(b, a): return false
 	return true
+## ファシズムの国が方針で狙った相手か（その相手とは不可侵条約を結ばない）
+func wantsLand(a: int, b: int) -> bool:
+	return NAT(a).get("ideo") == "fascism" and NAT(a).get("claimT", []).has(b)
 ## 方針で狙う相手とは同盟・条約を解く
 func _turnOn(nid: int, o: int) -> void:
+	var ct: Array = NAT(nid).get("claimT", [])
+	if not ct.has(o):
+		ct.append(o)
+		NAT(nid).claimT = ct
 	if isAlly(nid, o) and not isVassal(o, nid) and not isVassal(nid, o): breakAlly(nid, o)
 	if pactLeft(nid, o) > 0:
 		G.dip.pact[nid][o] = 0; G.dip.pact[o][nid] = 0

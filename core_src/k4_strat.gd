@@ -239,9 +239,11 @@ func cpuDiplomacy(nid: int) -> void:
 		var dg := cpuDanger(nid)
 		var Wp = warObj(nid, o.id)
 		var nearCap: bool = Wp != null and surrenderProg(Wp, nid) >= surrenderLimit(nid) * 0.7
-		var wantPeace: bool = goalDone(nid, o.id) or nearCap or mine < theirs * 0.8 or fat >= DIP.fatiguePeace or dg >= 0.9 \
+		var fascP: bool = na.get("ideo") == "fascism"
+		# ファシズムの国は負けていても粘る（国力が相手の5割を切るまで講和に応じにくい）
+		var wantPeace: bool = goalDone(nid, o.id) or nearCap or mine < theirs * (0.5 if fascP else 0.8) or fat >= DIP.fatiguePeace or dg >= 0.9 \
 			or (dg >= 0.6 and not isTopThreat(o.id)) \
-			or randf() < 0.08 + fat / 400.0 + P.peaceW + ((G.turn - Wp.t0) / 80.0 if Wp != null else 0.0)
+			or randf() < (0.08 + fat / 400.0 + P.peaceW + ((G.turn - Wp.t0) / 80.0 if Wp != null else 0.0)) * (0.4 if fascP else 1.0)
 		if not wantPeace: continue
 		var terms := cpuPeaceTerms(nid, o.id)
 		G.dip.peaceAt[nid][o.id] = G.turn; G.dip.peaceAt[o.id][nid] = G.turn
@@ -389,7 +391,7 @@ func cpuPeaceTies(nid: int, P: Dictionary) -> void:
 		var cs2 := []
 		for x in G.nations:
 			if x.alive and x.id != nid and relState(nid, x.id) == "peace" and pactLeft(nid, x.id) <= 0 and nationsAdjacent(nid, x.id) \
-					and not hasCB(nid, x.id) and favorOf(nid, x.id) >= pactNeed(nid) - 10 \
+					and not hasCB(nid, x.id) and not wantsLand(nid, x.id) and not wantsLand(x.id, nid) and favorOf(nid, x.id) >= pactNeed(nid) - 10 \
 					and (nationPower(x.id) > mine * 0.9 or war or cpuDanger(nid) >= 0.6):
 				cs2.append(x)
 		cs2.sort_custom(func(x, y): return nationPower(x.id) > nationPower(y.id))

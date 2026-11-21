@@ -177,10 +177,11 @@ func logMsg(s: String, cls := "") -> void:
 func notify(msg: String, cls := "") -> void:
 	notified.emit(msg, cls)
 	if G != null: logMsg(msg, "war" if cls == "err" else cls)
+var CHRON_BIG: bool = OS.get_environment("KN_TRACE") != ""
 func chron(text: String, nid = null, kind := "") -> void:
 	if G == null or not G.has("chron"): return
 	G.chron.append({"t": G.turn, "s": text, "n": -1 if nid == null else nid, "k": kind})
-	if G.chron.size() > 800: G.chron.pop_front()
+	if G.chron.size() > (20000 if CHRON_BIG else 800): G.chron.pop_front()
 
 func genOf(na: Dictionary, gid):
 	if gid == null: return null

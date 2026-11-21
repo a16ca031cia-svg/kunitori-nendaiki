@@ -11,5 +11,7 @@ wait
 for s in 7000 9000 11000 13000 15000 17000 19000 21000; do grep "SCORE2\|SCRIPT ERROR" $TMP/$s.txt | sed "s/^/[$s] /"; done
 W=$(cat $TMP/*.txt | grep SCORE2 | sed 's/.*戦時の無駄=\([0-9.]*\).*平時の無駄=\([0-9.]*\).*/\1 \2/' | awk '{w+=$1; p+=$2; n++} END {printf "戦時=%.2f 平時=%.3f", w/n, p/n}')
 C=$(cat $TMP/*.txt | grep "^SCORE 無駄" | sed 's/.*=\([0-9.]*\)$/\1/' | awk '{c+=$1; n++} END {printf "%.1f", c/n}')
-echo "平均 $W 占領=$C"
+F=$(cat $TMP/*.txt | grep SCORE3 | sed 's/.*前線の手当て=([0-9.]*).*/echo "平均 $W 占領=$C"
+/' | awk '{s+=$1;n++} END {printf "%.2f", s/n}')
+echo "平均 $W 占領=$C 前線の手当て=$F"
 rm -rf $TMP
