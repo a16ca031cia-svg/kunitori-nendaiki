@@ -1,0 +1,5007 @@
+# 自動生成：core_src/*.gd をまとめたもの（直接編集しない。tools/build_core.sh で作り直す）
+extends Node
+
+# ==================== k0_base.gd ====================
+# 国盗り年代記 — 定数・データ・道具（元 823〜1046行）
+
+const INF := 1.0e30
+
+func rnd(a: float, b: float) -> float: return a + randf() * (b - a)
+func ri(a: int, b: int) -> int: return int(floor(rnd(a, b + 1)))
+func pick(a: Array): return a[int(floor(randf() * a.size()))]
+func clamp_f(v: float, a: float, b: float) -> float: return a if v < a else (b if v > b else v)
+## 3桁区切りの整数
+func fmt(n) -> String:
+	var v = int(round(float(n)))
+	var neg = v < 0
+	var s = str(abs(v))
+	var out = ""
+	while s.length() > 3:
+		out = "," + s.substr(s.length() - 3) + out
+		s = s.substr(0, s.length() - 3)
+	return ("-" if neg else "") + s + out
+func shuffled(a: Array) -> Array:
+	var b = a.duplicate()
+	b.shuffle()
+	return b
+
+const TK := ["inf", "spe", "arc", "cav"]
+const TROOP := {
+	"inf": {"n": "歩兵", "atk": 105, "def": 110, "chg": 0.02, "c": "#d3c096"},
+	"spe": {"n": "槍兵", "atk": 95, "def": 130, "chg": 0.00, "c": "#8fb6cc"},
+	"arc": {"n": "弓兵", "atk": 140, "def": 70, "chg": 0.03, "c": "#cf9c8c"},
+	"cav": {"n": "騎兵", "atk": 120, "def": 90, "chg": 0.30, "c": "#b9a2d6"},
+}
+const BLD := {
+	"farm": {"n": "農場", "cost": 1500, "eff": "食料 +500"},
+	"market": {"n": "市場", "cost": 1500, "eff": "ゴールド +500", "cityOnly": true},
+	"gov": {"n": "役所", "cost": 2000, "eff": "治安 +5 / ターン"},
+	"house": {"n": "住宅地", "cost": 2000, "eff": "人口上限 +3,000・増加 +50%", "cityOnly": true},
+	"inf": {"n": "歩兵舎", "cost": 1500, "eff": "歩兵 +400"},
+	"spe": {"n": "槍兵舎", "cost": 2000, "eff": "槍兵 +300"},
+	"arc": {"n": "弓兵舎", "cost": 2000, "eff": "弓兵 +250"},
+	"cav": {"n": "厩舎", "cost": 3000, "eff": "騎兵 +150"},
+}
+const BLD_OUT := {"market": {"gold": 500}, "farm": {"food": 500}, "inf": {"inf": 400}, "spe": {"spe": 300}, "arc": {"arc": 250}, "cav": {"cav": 150}}
+const BLD_KEYS := ["farm", "market", "gov", "house", "inf", "spe", "arc", "cav"]
+const TRAIT := {
+	"fertile": {"n": "肥沃な土地", "d": "農場の食料 +30%", "c": "#6d9c63"},
+	"trade": {"n": "商業都市", "d": "市場の収入 +30%", "c": "#c9a227", "city": true},
+	"iron": {"n": "鉄鉱地", "d": "歩兵・槍兵の生産 +20%", "c": "#9aa3ad"},
+	"horse": {"n": "馬産地", "d": "騎兵の生産 +30%", "c": "#b9a2d6"},
+	"mount": {"n": "山岳要衝", "d": "防御 +15%", "c": "#8d8272"},
+	"road": {"n": "宿場町", "d": "インフラによる収入効果 +10%", "c": "#cf9c8c"},
+	"dense": {"n": "人口密集地", "d": "人口上限 +30%", "c": "#8fb6cc"},
+}
+const TRAIT_KEYS := ["fertile", "trade", "iron", "horse", "road", "dense"]   # 山岳要衝は地形「山地」に置き換え
+const TERRAIN := {
+	"plain": {"n": "平地", "c": "#e2d6aa", "def": 0.0, "pop": 1.0, "food": 1.1, "slow": false, "troop": {}, "d": "暮らしやすい土地。農場の食料 +10%"},
+	"grass": {"n": "草原", "c": "#d2d99c", "def": -0.05, "pop": 0.9, "food": 1.0, "slow": false, "troop": {"cav": 1.3}, "d": "騎兵の生産 +30%・守りにくい（防御 -5%）・人口上限 -10%"},
+	"forest": {"n": "森林", "c": "#a9c08f", "def": 0.15, "pop": 0.8, "food": 0.9, "slow": true, "troop": {"arc": 1.2}, "d": "防御 +15%・弓兵の生産 +20%・人口上限 -20%・食料 -10%・入るのに2ターン（インフラで短縮）"},
+	"hill": {"n": "丘陵", "c": "#d6bf8e", "def": 0.15, "pop": 0.85, "food": 0.9, "slow": false, "troop": {"spe": 1.15}, "d": "防御 +15%・槍兵の生産 +15%・人口上限 -15%・食料 -10%・入るのに2ターン（インフラで短縮）"},
+	"mount": {"n": "山地", "c": "#bcae96", "def": 0.35, "pop": 0.55, "food": 0.7, "slow": true, "troop": {"inf": 1.15}, "d": "防御 +35%・歩兵の生産 +15%・人口上限 -45%・食料 -30%・入るのに3ターン（インフラで短縮）"},
+	"marsh": {"n": "湿地", "c": "#b3c6b4", "def": 0.2, "pop": 0.7, "food": 0.8, "slow": true, "troop": {}, "d": "防御 +20%・人口上限 -30%・食料 -20%・入るのに2ターン（インフラで短縮）"},
+}
+const TERRAIN_KEYS := ["plain", "grass", "forest", "hill", "mount", "marsh"]
+const TERRAIN_KEYS_IDX := {"plain": 0, "grass": 1, "forest": 2, "hill": 3, "mount": 4, "marsh": 5}
+func terrOf(t: Dictionary) -> Dictionary: return TERRAIN.get(t.get("terrain", "plain"), TERRAIN.plain)
+const TERR_COST := {"plain": 1, "grass": 1, "hill": 2, "forest": 2, "marsh": 2, "mount": 3}
+const TRAIT_RATE := 0.45
+const DEV_COST := [0, 2000, 5000, 10000, 20000, 0]
+const ROAD_COST := [0, 5000, 12000, 0]
+const INFRA_COST := [0, 0, 12000, 30000]
+const INFRA_RATE := {"econ": 0.22, "bal": 0.14, "def": 0.12, "aggr": 0.08}
+const INFRA_N := ["", "乏しい", "整った", "主要街道"]
+const FORT_DEV_DEF := [0, 0, 0.05, 0.10, 0.15, 0.20]
+const GEN_ABIL := [
+	{"k": "atk", "n": "攻撃力 +5%"}, {"k": "def", "n": "防御力 +5%"}, {"k": "chg", "n": "突撃率 +3%"},
+	{"k": "inf", "n": "歩兵効果 +8%"}, {"k": "spe", "n": "槍兵効果 +8%"},
+	{"k": "arc", "n": "弓兵効果 +8%"}, {"k": "cav", "n": "騎兵効果 +8%"},
+]
+const GEN_COST := 5000
+const GEN_MAX := 24
+const ARMY_MAX := 20
+const TURN_MAX := 9999
+const NCOL_BASE := ["#b03a3a", "#3a6ea5", "#4c8a52", "#7f5aa8", "#c07f2a",
+	"#2f8f8a", "#a8467f", "#86953a", "#d0b040", "#8a5c3a", "#c2757f", "#5a6b7d"]
+const NCOL_WILD := "#8f8672"   # 無主の地（JS の NCOL[-1]）
+var NCOL: Array = NCOL_BASE.duplicate()
+func ncol(i: int) -> String: return NCOL_WILD if i < 0 or i >= NCOL.size() else NCOL[i]
+func resetColors(list = null) -> void:
+	NCOL = (list if list != null and list.size() > 0 else NCOL_BASE).duplicate()
+const SIZES := {"small": {"n": 250, "nat": 8}, "mid": {"n": 400, "nat": 10}, "large": {"n": 600, "nat": 12}}
+
+const PERSONA := {
+	"aggr": {"n": "攻勢型", "d": "軍団と侵攻を優先", "army": 1, "goal": 0.85, "atkTh": 1.05, "guard": 0.34, "mkt": 0.22, "devG": 9000, "roadG": 21000, "mix": {"inf": 0.42, "spe": 0.13, "arc": 0.20, "cav": 0.25}, "settle": 0.8,
+		"tradeW": -10, "pactW": -25, "fab": 0.45, "noCB": 0.12, "peaceW": -0.03, "dd": "口実を作ってでも弱い隣国を狙う。条約は好まない"},
+	"def": {"n": "防衛型", "d": "砦と国境を重視", "army": 0, "goal": 1.10, "atkTh": 1.50, "guard": 0.62, "mkt": 0.40, "devG": 7000, "roadG": 15000, "mix": {"inf": 0.40, "spe": 0.32, "arc": 0.20, "cav": 0.08}, "settle": 1.0,
+		"tradeW": 5, "pactW": 20, "fab": 0.0, "noCB": 0.0, "peaceW": 0.05, "dd": "大義のある戦しかしない。不可侵条約で背後を固める"},
+	"econ": {"n": "内政型", "d": "都市とインフラを優先", "army": -1, "goal": 1.15, "atkTh": 1.45, "guard": 0.50, "mkt": 0.62, "devG": 3500, "roadG": 10000, "mix": {"inf": 0.45, "spe": 0.20, "arc": 0.22, "cav": 0.13}, "settle": 1.5,
+		"tradeW": 15, "pactW": 10, "fab": 0.0, "noCB": 0.0, "peaceW": 0.08, "dd": "開拓と通商で富を築く。戦は避け、早く講和する"},
+	"bal": {"n": "均衡型", "d": "攻守のつり合いを取る", "army": 0, "goal": 1.0, "atkTh": 1.20, "guard": 0.50, "mkt": 0.42, "devG": 6000, "roadG": 16000, "mix": {"inf": 0.45, "spe": 0.20, "arc": 0.20, "cav": 0.15}, "settle": 1.1,
+		"tradeW": 5, "pactW": 0, "fab": 0.2, "noCB": 0.0, "peaceW": 0.02, "dd": "大義があり勝てる時に限って戦う"},
+}
+
+## 調整用パラメータ（すべて仮値・デバッグから変更可）
+var CFG = {
+	"chaosTurns": 3, "chaosMul": 0.5, "supplyPenalty": 0.10, "eventRate": 0.09,
+	"showCpuBattle": true, "showDip": true,
+	"dmgK": 0.008, "sizeExp": 0.80, "chargeIgnore": 0.5, "baseGold": 100, "fortBase": 0.30,
+	"assaultLoss": 1.35, "siegeTurns": 3, "siegeBleed": 0.14, "siegeSec": 7, "siegeFood": 4,
+	"cpuStop": false, "minDmg": 4,
+	"cpuDelay": 340, "autoTurnMs": 700, "phaseDelay": 480,
+	"taxRate": 0.02, "popCity": 6000, "popFort": 2500, "popGrow": 0.10, "levyPop": 1, "levyFloor": 0.30,
+	"disbandBack": 0.8, "stockCapPop": 0.25, "houseCap": 3000, "foodPop": 4, "foodTroop": 6, "farmOut": 500,
+	"secStart": 70, "secRecover": 2, "secGov": 5, "secWar": -1, "secChaos": -4, "secStarve": -6, "secCapture": 25,
+	"revoltSec": 15, "revoltRate": 0.12,
+	"roadBonus": [0, 0, 0.10, 0.20],
+	"fatWar": 2, "fatPeace": -4, "fatLose": 5, "fatTerr": 8,
+	"fatMid": 50, "fatMidMul": 0.10, "fatHigh": 80, "fatHighMul": 0.25,
+}
+## 序盤：無主の地と開拓
+var FRONT = {"startTerr": 0, "wildPop": 0.55, "settleGold": 3000, "settleGrow": 120, "settleTurns": 3, "settleMax": 3, "settleSec": 60}
+
+var G = null   # ゲーム状態（Dictionary）
+## 画面側の状態（JS の UI のうちロジックが参照するもの）
+var UI = {"sel": null, "selArmy": null, "selRoad": null, "moveMode": null, "size": "japan", "busy": false,
+	"actArmy": null, "mapMode": "pol", "selNat": null, "speed": 1, "logOn": true}
+
+## 画面への通知（UI 側がつなぐ）。ロジックからは emit するだけ
+signal log_changed
+signal notified(msg: String, cls: String)
+signal map_changed(kind: String, arg)   # "terr"(tid) / "all" / "edge"
+signal fx(kind: String, arg)            # "move"(army,from) / "flash"(tid)
+
+# ---------- 名前生成 ----------
+const NA := ["ヴァル", "エル", "グラン", "ザル", "メル", "オル", "カル", "ディ", "ノル", "ラム", "テュ", "ブラン"]
+const NB := ["ドリア", "ガルド", "ハイム", "ティア", "メルク", "ローデ", "バーン", "シュタット", "フェルト", "ネス"]
+const NC := ["王国", "公国", "帝国", "侯国", "同盟"]
+const CA := ["アル", "ベル", "クレ", "ドラ", "エス", "フィ", "ゴル", "ハル", "イル", "ジェ", "ケル", "ラン", "ミル",
+	"ノヴ", "オス", "プラ", "リヴ", "サル", "トル", "ウル", "ヴェ", "ワル", "ザン", "ヒル", "モン",
+	"カル", "セル", "ネル", "ロウ", "ダン", "エル", "グラ", "ティ", "バル", "メル"]
+const CB := ["ム", "ン", "ス", "ト", "ク", "ラ", "ダ", "グ", "ベル", "ハイム", "ポート", "フェン", "ロード", "ブルク", "ヴィル",
+	"ドール", "ミア", "リア", "ノール", "タス"]
+const FA := ["鷹", "黒", "白", "鉄", "灰", "古", "赤", "銀", "狼", "竜", "碑", "霧", "朝", "涯", "槍",
+	"青", "金", "烏", "鹿", "雪", "月", "星", "風", "嵐", "石"]
+const FB := ["の門", "の峰", "の渡し", "ノ関", "の丘", "の辻", "の岩", "の谷",
+	"の森", "の淵", "の原", "の坂", "の塔", "の湊", "の牙", "の尾"]
+const GN_A := ["アル", "ベル", "コン", "ドル", "エギ", "ファ", "ガル", "ハウ", "イグ", "ジル", "クラ", "ルー", "マル", "ノ", "オー"]
+const GN_B := ["ヴィン", "トス", "ラート", "ミル", "ドルフ", "ザーク", "ハルト", "ネス", "グレン", "ヴィス", "ベルト"]
+
+func uniqName(used: Dictionary, f: Callable) -> String:
+	for i in 200:
+		var s: String = f.call()
+		if not used.has(s):
+			used[s] = true
+			return s
+	return f.call() + str(used.size())
+
+func d2(x: float, y: float, p) -> float: return (x - p[0]) * (x - p[0]) + (y - p[1]) * (y - p[1])
+func bkey(a: int, b: int) -> String: return (str(a) + "_" + str(b)) if a < b else (str(b) + "_" + str(a))
+
+# ---------- 参照ヘルパ ----------
+func T(id) -> Dictionary: return G.terrs[int(id)]
+func NAT(id) -> Dictionary: return G.nations[int(id)]
+func total(t: Dictionary) -> int: return int(t.inf + t.spe + t.arc + t.cav)
+func followNat():
+	return UI.selNat if G.observer else 0
+func concerns(ids: Array) -> bool:
+	var f = followNat()
+	return f != null and f >= 0 and ids.has(f)
+func logWar(msg: String, ids: Array, cls := "") -> void:
+	if concerns(ids): logMsg(msg, cls)
+func logMsg(s: String, cls := "") -> void:
+	G.log.append({"s": s, "cls": cls, "t": G.turn})
+	if G.log.size() > 60: G.log.pop_front()
+	log_changed.emit()
+func notify(msg: String, cls := "") -> void:
+	notified.emit(msg, cls)
+	if G != null: logMsg(msg, "war" if cls == "err" else cls)
+func chron(text: String, nid = null, kind := "") -> void:
+	if G == null or not G.has("chron"): return
+	G.chron.append({"t": G.turn, "s": text, "n": -1 if nid == null else nid, "k": kind})
+	if G.chron.size() > 800: G.chron.pop_front()
+
+func genOf(na: Dictionary, gid):
+	if gid == null: return null
+	for x in na.gens:
+		if x.id == gid: return x
+	return null
+## 領地ごとの軍団の索引（軍団が動いた・増えた・消えた時に ARMY_REV を上げると作り直す）
+var ARMY_REV = 0
+var AIDX_REV = -1
+var AIDX_G = null
+var AIDX = {}
+const EMPTY_ARR := []
+func armiesAt(tid: int) -> Array:
+	if AIDX_REV != ARMY_REV or AIDX_G != G:
+		AIDX = {}
+		for na in G.nations:
+			for a in na.armies:
+				if a == null: continue
+				if AIDX.has(a.at): AIDX[a.at].append(a)
+				else: AIDX[a.at] = [a]
+		AIDX_REV = ARMY_REV
+		AIDX_G = G
+	return AIDX.get(tid, EMPTY_ARR)
+func myArmies(nid: int) -> Array:
+	var r = []
+	for a in G.nations[nid].armies:
+		if a != null: r.append(a)
+	return r
+
+## 色の文字列 → Color
+func col(hex: String, a := 1.0) -> Color:
+	var c = Color.html(hex)
+	c.a = a
+	return c
+
+# ==================== k1_map.gd ====================
+# 地図：架空の大陸の生成（元 1048〜1418）・日本地図の読み込み・領地の形の道具
+
+const JP := {"U": 6.5, "S": 4, "lon0": 127.6, "lat1": 45.9}
+func jpProj(lon: float, lat: float) -> Vector2:
+	var kx: float = 111.32 * cos(deg_to_rad(36.5)) * JP.U
+	var ky: float = 110.95 * JP.U
+	return Vector2((lon - JP.lon0) * kx, (JP.lat1 - lat) * ky)
+
+# ---------- 幾何 ----------
+## 多角形を長方形で切る
+func clipRect(poly: Array, x0: float, y0: float, x1: float, y1: float) -> Array:
+	var p = poly
+	p = _clipEdge(p, 0, x0, true); if p.size() < 3: return p
+	p = _clipEdge(p, 0, x1, false); if p.size() < 3: return p
+	p = _clipEdge(p, 1, y0, true); if p.size() < 3: return p
+	return _clipEdge(p, 1, y1, false)
+func _clipEdge(pts: Array, axis: int, v: float, keepGreater: bool) -> Array:
+	var out = []
+	var n = pts.size()
+	for i in n:
+		var A: Vector2 = pts[i]
+		var B: Vector2 = pts[(i + 1) % n]
+		var ia: bool = (A[axis] >= v) if keepGreater else (A[axis] <= v)
+		var ib: bool = (B[axis] >= v) if keepGreater else (B[axis] <= v)
+		if ia: out.append(A)
+		if ia != ib:
+			var t: float = (v - A[axis]) / (B[axis] - A[axis])
+			out.append(A + (B - A) * t)
+	return out
+func _circum(a: Vector2, b: Vector2, c: Vector2) -> Vector2:
+	var d = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y))
+	if abs(d) < 1e-12: return (a + b + c) / 3.0
+	var a2 = a.length_squared()
+	var b2 = b.length_squared()
+	var c2 = c.length_squared()
+	return Vector2((a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d,
+		(a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d)
+## ドロネー分割から作るボロノイ（JS の voronoiD3 と同じ形で返す）
+func buildVoronoi(sites: Array, W: float, H: float) -> Dictionary:
+	var n = sites.size()
+	var pts = PackedVector2Array()
+	for s in sites: pts.append(s)
+	pts.append(Vector2(-10 * W, -10 * H)); pts.append(Vector2(11 * W, -10 * H))
+	pts.append(Vector2(11 * W, 11 * H)); pts.append(Vector2(-10 * W, 11 * H))
+	var tri = Geometry2D.triangulate_delaunay(pts)
+	var inc = []
+	var nbs = []
+	for i in n:
+		inc.append([])
+		nbs.append({})
+	var cc = []
+	for k in range(0, tri.size(), 3):
+		var ia = tri[k]
+		var ib = tri[k + 1]
+		var ic = tri[k + 2]
+		var c = _circum(pts[ia], pts[ib], pts[ic])
+		var ti = cc.size()
+		cc.append(c)
+		for v in [ia, ib, ic]:
+			if v < n: inc[v].append(ti)
+		for e in [[ia, ib], [ib, ic], [ic, ia]]:
+			if e[0] < n and e[1] < n:
+				nbs[e[0]][e[1]] = true
+				nbs[e[1]][e[0]] = true
+	var polys = []
+	var nb = []
+	var edgeNb = []
+	for i in n:
+		var s: Vector2 = sites[i]
+		var ring = []
+		for ti in inc[i]: ring.append(cc[ti])
+		ring.sort_custom(func(p, q): return (p - s).angle() < (q - s).angle())
+		var dd = []
+		for p in ring:
+			if dd.is_empty() or (p - dd[-1]).length() > 1e-3: dd.append(p)
+		if dd.size() > 1 and (dd[0] - dd[-1]).length() <= 1e-3: dd.pop_back()
+		var poly = clipRect(dd, 0, 0, W, H)
+		var clean = []
+		for p in poly:
+			if clean.is_empty() or (p - clean[-1]).length() > 1e-3: clean.append(p)
+		if clean.size() > 1 and (clean[0] - clean[-1]).length() <= 1e-3: clean.pop_back()
+		polys.append(clean)
+		nb.append({})
+		edgeNb.append([])
+	for i in n:
+		var p: Array = polys[i]
+		var cand: Array = nbs[i].keys()
+		for e in p.size():
+			var A: Vector2 = p[e]
+			var B: Vector2 = p[(e + 1) % p.size()]
+			var m = (A + B) / 2.0
+			var di = m.distance_squared_to(sites[i])
+			var best = -1
+			var bd = INF
+			for j in cand:
+				var dj = m.distance_squared_to(sites[j])
+				if dj < bd:
+					bd = dj
+					best = j
+			var shared: bool = best >= 0 and abs(bd - di) < max(1.0, di) * 1e-3   # Vector2 は単精度なので緩めに（候補はドロネーの隣だけ）
+			edgeNb[i].append(best if shared else -1)
+			if shared:
+				nb[i][best] = true
+				nb[best][i] = true
+	return {"polys": polys, "nb": nb, "edgeNb": edgeNb}
+
+# ---------- 境界の曲線化 ----------
+func wobbleEdge(A: Vector2, B: Vector2) -> Array:
+	var d = B - A
+	var len: float = max(d.length(), 1.0)
+	var n = int(clamp_f(round(len / 34), 2, 7))
+	var pn = Vector2(-d.y / len, d.x / len)
+	var amp: float = min(17.0, len * 0.14)
+	var pts = [A]
+	var o = 0.0
+	for i in range(1, n):
+		var t = float(i) / n
+		o = o * 0.5 + (randf() * 2 - 1) * amp
+		var w = o * sin(PI * t)
+		pts.append(A + d * t + pn * w)
+	pts.append(B)
+	return pts
+# ---------- なめらかなノイズ ----------
+func waveNoise(n: int, minL: float, maxL: float) -> Callable:
+	var w = []
+	for i in n:
+		var a = randf() * TAU
+		var L = rnd(minL, maxL)
+		w.append([cos(a) * TAU / L, sin(a) * TAU / L, randf() * 7, rnd(0.5, 1)])
+	return func(x: float, y: float) -> float:
+		var v = 0.0
+		var s2 = 0.0
+		for q in w:
+			v += sin(x * q[0] + y * q[1] + q[2]) * q[3]
+			s2 += q[3]
+		return v / s2
+func assignTerrain(sites: Array) -> Array:
+	var n = sites.size()
+	var el = waveNoise(7, 900, 2600)
+	var mo = waveNoise(7, 800, 2400)
+	var fine = waveNoise(5, 350, 700)
+	var E = []
+	var Mo = []
+	for s in sites:
+		E.append(el.call(s.x, s.y) + fine.call(s.x, s.y) * 0.35)
+		Mo.append(mo.call(s.x, s.y) + fine.call(s.y, s.x) * 0.3)
+	var res = []
+	res.resize(n)
+	res.fill("plain")
+	var rest = range(n)
+	var take = func(list: Array, cnt: int, key: Callable, kind: String) -> Array:
+		list.sort_custom(func(a, b): return key.call(a) > key.call(b))
+		for i in min(cnt, list.size()): res[list[i]] = kind
+		return list.slice(cnt)
+	rest = take.call(rest, int(round(n * 0.10)), func(i): return E[i], "mount")
+	rest = take.call(rest, int(round(n * 0.15)), func(i): return E[i], "hill")
+	rest = take.call(rest, int(round(n * 0.08)), func(i): return Mo[i] - E[i] * 0.8, "marsh")
+	rest = take.call(rest, int(round(n * 0.20)), func(i): return Mo[i], "forest")
+	rest = take.call(rest, int(round(n * 0.15)), func(i): return -Mo[i], "grass")
+	return res
+# ---------- 大陸の輪郭 ----------
+func makeContinent() -> Callable:
+	var ph = [rnd(0, 6.28), rnd(0, 6.28), rnd(0, 6.28), rnd(0, 6.28), rnd(0, 6.28)]
+	var a = [rnd(0.11, 0.19), rnd(0.08, 0.15), rnd(0.05, 0.10), rnd(0.03, 0.07), rnd(0.02, 0.05)]
+	var base = rnd(0.70, 0.78)
+	return func(th: float) -> float:
+		return clamp_f(base + a[0] * sin(th * 2 + ph[0]) + a[1] * sin(th * 3 + ph[1]) + a[2] * sin(th * 5 + ph[2]) \
+			+ a[3] * sin(th * 7 + ph[3]) + a[4] * sin(th * 11 + ph[4]), 0.30, 0.985)
+func inLand(shape: Callable, x: float, y: float, W: float, H: float) -> bool:
+	var dx = (x - W / 2) / (W / 2)
+	var dy = (y - H / 2) / (H / 2)
+	return Vector2(dx, dy).length() <= shape.call(atan2(dy, dx))
+func keepMainland(keep: Array, nb: Array) -> Array:
+	var seen = []
+	seen.resize(keep.size())
+	seen.fill(false)
+	var best = null
+	for i in keep.size():
+		if not keep[i] or seen[i]: continue
+		var q = [i]
+		seen[i] = true
+		var h = 0
+		while h < q.size():
+			for j in nb[q[h]]:
+				if keep[j] and not seen[j]:
+					seen[j] = true
+					q.append(j)
+			h += 1
+		if best == null or q.size() > best.size(): best = q
+	if best == null: return keep
+	var ok = []
+	ok.resize(keep.size())
+	ok.fill(false)
+	for i in best: ok[i] = true
+	return ok
+
+func _newNation(k: int, name: String, color: String, capital: int, persona: String) -> Dictionary:
+	var arm = []
+	arm.resize(ARMY_MAX)
+	return {"id": k, "name": name, "color": color, "gold": 10000, "stock": {"inf": 3000, "spe": 0, "arc": 0, "cav": 0},
+		"gens": [], "armies": arm, "alive": true, "capital": capital, "player": false, "persona": persona,
+		"wins": 0, "losses": 0, "recLed": 0, "badHarv": 0, "mile": {}, "threat": 0,
+		"food": 0, "foodIn": 0, "foodNeed": 0, "fatigue": 0,
+		"lord": null, "unrest": 0, "revoltBuff": 0, "policy": "none", "policyAt": -99}
+func _newTerr(i: int, pos: Vector2, segs: Array, owner: int, cap: bool, type: String, name: String, dev: int, terrain: String) -> Dictionary:
+	return {"id": i, "x": pos.x, "y": pos.y, "segs": segs, "owner": owner, "cap": cap, "type": type, "name": name,
+		"dev": dev, "devP": false, "bld": [], "chaos": 0, "pop": 0, "sec": CFG.secStart, "link": 1, "trait": null,
+		"terrain": terrain, "infra": 1, "siege": null}
+## 最後の仕上げ：国の初期の食料・将軍と第1軍団
+func _finishNations(g: Dictionary) -> void:
+	var popBy = {}
+	for t in g.terrs: popBy[t.owner] = popBy.get(t.owner, 0) + t.pop
+	for na in g.nations:
+		na.food = int(round((popBy.get(na.id, 0) / 1000.0 * CFG.foodPop + 3 * CFG.foodTroop) * 10))
+	initDip(g)
+	for na in g.nations:
+		var gen = mkGen(g, na, randomPts())
+		var a = mkArmy(na.id, 0, na.capital)
+		a.t.inf = 3000
+		a.target.inf = 3000
+		a.gen = gen.id
+		gen.army = 0
+		na.armies[0] = a; ARMY_REV += 1
+		na.stock.inf = 0
+
+## 架空の大陸
+func genMap(size: String) -> Dictionary:
+	var SZ: Dictionary = SIZES.get(size, SIZES.mid)
+	var N: int = SZ.n
+	var NN: int = SZ.nat
+	var shape = makeContinent()
+	var mult = 1.85
+	var cols = 1
+	var rows = 1
+	var W = 0.0
+	var H = 0.0
+	var pts = []
+	var land = []
+	for it in 9:
+		var M: int = max(NN * 3, int(round(N * mult)))
+		cols = int(round(sqrt(M * 2.1)))
+		rows = max(3, int(round(float(M) / cols)))
+		W = 190.0 * cols
+		H = 190.0 * rows
+		pts = []
+		for r in rows:
+			for c in cols:
+				var cw = W / cols
+				var ch = H / rows
+				pts.append(Vector2(cw * (c + 0.5) + rnd(-cw * 0.32, cw * 0.32), ch * (r + 0.5) + rnd(-ch * 0.32, ch * 0.32)))
+		land = []
+		var k = 0
+		for p in pts:
+			var v = inLand(shape, p.x, p.y, W, H)
+			land.append(v)
+			if v: k += 1
+		if abs(k - N) <= max(2, N * 0.03): break
+		mult *= float(N) / max(1, k)
+	var sites0 = pts
+	var V = buildVoronoi(sites0, W, H)
+	var polys0: Array = V.polys
+	var nb0 = []
+	for s in V.nb: nb0.append(s.keys())
+	var edgeNb0: Array = V.edgeNb
+	var n0 = sites0.size()
+	# 境界線を曲線化（隣り合う領地で同じ線を共有する）
+	var borders = {}
+	for i in n0:
+		var p: Array = polys0[i]
+		for e in p.size():
+			var j: int = edgeNb0[i][e]
+			if j < 0 or i > j: continue
+			borders[bkey(i, j)] = wobbleEdge(p[e], p[(e + 1) % p.size()])
+	var outlines0 = []
+	for i in n0:
+		var p: Array = polys0[i]
+		var segs = []
+		for e in p.size():
+			var A: Vector2 = p[e]
+			var B: Vector2 = p[(e + 1) % p.size()]
+			var j: int = edgeNb0[i][e]
+			if j < 0:
+				segs.append([A, B])
+				continue
+			var line: Array = borders[bkey(i, j)]
+			if i < j: segs.append(line.duplicate())
+			else:
+				var r = line.duplicate()
+				r.reverse()
+				segs.append(r)
+		outlines0.append(segs)
+	# 海の部分を捨てて番号を振り直す
+	var keep = keepMainland(land, nb0)
+	var remap = []
+	remap.resize(n0)
+	remap.fill(-1)
+	var pick0 = []
+	for i in n0:
+		if keep[i]:
+			remap[i] = pick0.size()
+			pick0.append(i)
+	var sites = []
+	var outlines = []
+	var nb = []
+	for i in pick0:
+		sites.append(sites0[i])
+		outlines.append(outlines0[i])
+		var l = []
+		for j in nb0[i]:
+			if keep[j]: l.append(remap[j])
+		nb.append(l)
+	var n = sites.size()
+	# 国の種（互いに離れた点）
+	var seeds = [ri(0, n - 1)]
+	while seeds.size() < NN:
+		var best = -1
+		var bd = -1.0
+		for i in n:
+			if seeds.has(i): continue
+			var d = INF
+			for s in seeds: d = min(d, sites[i].distance_squared_to(sites[s]))
+			if d > bd:
+				bd = d
+				best = i
+		seeds.append(best)
+	# 多元BFSで領地を分配
+	var owner = []
+	owner.resize(n)
+	owner.fill(-1)
+	var front = []
+	for k in NN:
+		owner[seeds[k]] = k
+		front.append([seeds[k]])
+	var placed = NN
+	while placed < n:
+		var moved = false
+		for k in NN:
+			var f: Array = front[k]
+			while f.size():
+				var cur: int = f[0]
+				var free = []
+				for j in nb[cur]:
+					if owner[j] < 0: free.append(j)
+				if free.is_empty():
+					f.pop_front()
+					continue
+				var j2: int = free[ri(0, free.size() - 1)]
+				owner[j2] = k
+				f.append(j2)
+				placed += 1
+				moved = true
+				break
+			if placed >= n: break
+		if not moved:
+			for i in n:
+				if owner[i] < 0:
+					owner[i] = ri(0, NN - 1)
+					placed += 1
+	# 領地
+	var terrain = assignTerrain(sites)
+	for sd in seeds:
+		if TERRAIN[terrain[sd]].slow: terrain[sd] = "plain"
+	var usedC = {}
+	var usedF = {}
+	var terrs = []
+	for i in n:
+		var border = false
+		for j in nb[i]:
+			if owner[j] != owner[i]: border = true
+		var isCap = seeds.has(i)
+		var rough: bool = terrain[i] == "mount" or terrain[i] == "hill"
+		var fort: bool = not isCap and randf() < (0.55 if border else 0.20) + (0.15 if rough else 0.0)
+		var nm: String = uniqName(usedF, func(): return pick(FA) + pick(FB) + "砦") if fort else uniqName(usedC, func(): return pick(CA) + pick(CB))
+		var segs = []
+		for sg in outlines[i]: segs.append(PackedVector2Array(sg))
+		terrs.append(_newTerr(i, sites[i], segs, owner[i], isCap, "fort" if fort else "city", nm, 3 if isCap else ri(1, 2), terrain[i]))
+	for t in terrs:
+		t.pop = int(round((CFG.popCity if t.type == "city" else CFG.popFort) * t.dev * 0.7 * terrOf(t).pop))
+		if randf() < TRAIT_RATE:
+			var keys = []
+			for k in TRAIT_KEYS:
+				if not (TRAIT[k].get("city", false) and t.type != "city"): keys.append(k)
+			t.trait = pick(keys)
+	# 地形障壁（険しい山脈は越えられない）
+	var bars = []
+	for a in n:
+		for b in nb[a]:
+			if a >= b: continue
+			var mt: bool = terrain[a] == "mount" or terrain[b] == "mount" or (terrain[a] == "hill" and terrain[b] == "hill")
+			var kind = "mtn" if mt or randf() < 0.3 else "river"
+			var line = borders.get(bkey(pick0[a], pick0[b]))
+			if line == null: continue
+			bars.append({"a": a, "b": b, "kind": kind, "pts": PackedVector2Array(line)})
+	# 開始時は首都の周りだけを治め、残りは無主の地
+	var blocked = {}
+	for b in bars:
+		if b.kind == "mtn": blocked[bkey(b.a, b.b)] = true
+	var rn = []
+	for i in n:
+		var l = []
+		for j in nb[i]:
+			if not blocked.has(bkey(i, j)): l.append(j)
+		rn.append(l)
+	for k in NN:
+		var keepN: int = FRONT.startTerr if FRONT.startTerr > 0 else max(4, int(round(float(N) / NN * 0.15)))
+		var seen = {seeds[k]: true}
+		var q = [seeds[k]]
+		var i = 0
+		while i < q.size() and seen.size() < keepN:
+			var nx = []
+			for j in rn[q[i]]:
+				if terrs[j].owner == k and not seen.has(j): nx.append(j)
+			var sp: Vector2 = sites[seeds[k]]
+			nx.sort_custom(func(x, y): return sites[x].distance_squared_to(sp) < sites[y].distance_squared_to(sp))
+			for j in nx:
+				if seen.size() >= keepN: break
+				seen[j] = true
+				q.append(j)
+			i += 1
+		for t in terrs:
+			if t.owner == k and not seen.has(t.id):
+				t.owner = -1
+				t.dev = 1
+				t.bld = []
+				t.pop = int(round((CFG.popCity if t.type == "city" else CFG.popFort) * 0.7 * FRONT.wildPop * terrOf(t).pop))
+	# 国家
+	var usedN = {}
+	var nations = []
+	var pk = shuffled(["aggr", "def", "econ", "bal"])
+	for k in NN:
+		nations.append(_newNation(k, uniqName(usedN, func(): return pick(NA) + pick(NB) + pick(NC)), NCOL[k], seeds[k], pk[k % 4]))
+	# つながり：隣り合う領地はどこへでも（険しい山脈だけは越えられない）。インフラは首都と大きな町ほど高い
+	var edges = []
+	for a in n:
+		for b in nb[a]:
+			if a < b and not blocked.has(bkey(a, b)):
+				edges.append({"a": a, "b": b, "lv": 3, "pend": false, "cx": 0.0, "cy": 0.0})
+	var capN = {}
+	for e in edges:
+		if terrs[e.a].cap: capN[e.b] = true
+		if terrs[e.b].cap: capN[e.a] = true
+	for t in terrs:
+		t.infra = 3 if t.cap else (2 if capN.has(t.id) or (t.type == "city" and t.dev >= 3) else 1)
+	# 陸地に合わせて地図の広さを詰める
+	var x0 = INF
+	var y0 = INF
+	var x1 = -INF
+	var y1 = -INF
+	for t in terrs:
+		for sg in t.segs:
+			for p in sg:
+				x0 = min(x0, p.x); x1 = max(x1, p.x); y0 = min(y0, p.y); y1 = max(y1, p.y)
+	var M2 = 130.0
+	var off = Vector2(M2 - x0, M2 - y0)
+	for t in terrs:
+		t.x += off.x
+		t.y += off.y
+		var ns = []
+		for sg in t.segs:
+			var q = PackedVector2Array()
+			for p in sg: q.append(p + off)
+			ns.append(q)
+		t.segs = ns
+	for b in bars:
+		var q = PackedVector2Array()
+		for p in b.pts: q.append(p + off)
+		b.pts = q
+	W = round(x1 - x0 + M2 * 2)
+	H = round(y1 - y0 + M2 * 2)
+	var g = {"turn": 1, "size": size, "W": W, "H": H, "terrs": terrs, "edges": edges, "bars": bars, "nations": nations,
+		"nb": nb, "gid": 1, "log": [], "over": null, "chron": [], "hist": [], "observer": true, "supply": null}
+	_finishNations(g)
+	return g
+
+## 日本地図：元の JS で作った初期状態（4種類）から1つ選び、国の性格などはここで振り直す
+func genJapan(which := -1) -> Dictionary:
+	if which < 0: which = randi() % 4
+	var f = FileAccess.open_compressed("res://data/jp/map%d.bin" % which, FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
+	var m: Dictionary = f.get_var()
+	f.close()
+	var terrs: Array = m.terrs
+	for t in terrs:
+		t.devP = false
+		t.bld = []
+		t.chaos = 0
+		t.siege = null
+		if not t.has("trait"): t.trait = null
+		t.link = 1
+		t.sec = CFG.secStart
+	var cols = []
+	for n in m.nat: cols.append(n.color)
+	resetColors(cols)
+	var NN: int = m.nat.size()
+	var pk = []
+	for i in NN: pk.append(["aggr", "def", "econ", "bal"][i % 4])
+	pk.shuffle()
+	var nations = []
+	for k in NN:
+		nations.append(_newNation(k, m.nat[k].name, m.nat[k].color, m.nat[k].capital, pk[k]))
+	var g = {"turn": 1, "size": "japan", "W": m.W, "H": m.H, "terrs": terrs, "edges": m.edges, "bars": [], "nations": nations,
+		"nb": m.nb, "gid": 1, "log": [], "over": null, "chron": [], "hist": [], "observer": true, "supply": null,
+		"geo": m.geo, "jpMap": which}
+	_finishNations(g)
+	return g
+
+# ---------- 領地の形の道具 ----------
+func terrBounds(t: Dictionary) -> Rect2:
+	if t.has("bb"): return t.bb
+	var x0 = INF
+	var y0 = INF
+	var x1 = -INF
+	var y1 = -INF
+	for sg in t.segs:
+		for p in sg:
+			x0 = min(x0, p.x); x1 = max(x1, p.x); y0 = min(y0, p.y); y1 = max(y1, p.y)
+	t.bb = Rect2(x0, y0, x1 - x0, y1 - y0)
+	return t.bb
+## 各辺がどの領地と接しているか（端点が一致する辺は同じ境）
+var SEGN_DONE = null
+func segNbrs() -> void:
+	if SEGN_DONE == G: return
+	var m = {}
+	for t in G.terrs:
+		if t.has("sn") and t.sn.size() == t.segs.size():
+			t.segN = Array(t.sn)
+			continue
+		var sn = []
+		sn.resize(t.segs.size())
+		sn.fill(-1)
+		t.segN = sn
+		for i in t.segs.size():
+			var sg: PackedVector2Array = t.segs[i]
+			var a = "%d,%d" % [round(sg[0].x), round(sg[0].y)]
+			var b = "%d,%d" % [round(sg[-1].x), round(sg[-1].y)]
+			var k = (a + "|" + b) if a < b else (b + "|" + a)
+			if not m.has(k): m[k] = []
+			m[k].append([t, i])
+	for arr in m.values():
+		if arr.size() != 2: continue
+		arr[0][0].segN[arr[0][1]] = arr[1][0].id
+		arr[1][0].segN[arr[1][1]] = arr[0][0].id
+	SEGN_DONE = G
+
+# ==================== k2_rules.gd ====================
+# 参照・経路・補給・国力（元 1443〜1600）／軍団・戦闘・占領（元 3554〜4046）
+
+var NBR = null
+var NBR_G = null
+func buildNbrs() -> void:
+	NBR = []
+	NBR.resize(G.terrs.size())
+	for i in NBR.size(): NBR[i] = []
+	for e in G.edges:
+		NBR[e.a].append({"to": e.b, "e": e})
+		NBR[e.b].append({"to": e.a, "e": e})
+	NBR_G = G
+func roadNbrs(id: int) -> Array:
+	if NBR_G != G or NBR == null: buildNbrs()
+	return NBR[id] if id >= 0 and id < NBR.size() else []
+func edgeBetween(a: int, b: int):
+	for n in roadNbrs(a):
+		if n.to == b: return n.e
+	return null
+func ownRoad(e: Dictionary, nid := 0) -> bool: return T(e.a).owner == nid or T(e.b).owner == nid
+
+## 隣の領地へ入るのにかかるターン数
+func stepCost(tid: int, e) -> int:
+	var t = T(tid)
+	var c: int = TERR_COST.get(t.terrain, 1) - (int(t.get("infra", 1)) - 1)
+	if c < 1: c = 1
+	if e != null and e.get("sea", false) and c < 2: c = 2
+	if e != null and e.get("river", false) and int(t.get("infra", 1)) < 3: c += 1
+	return c
+func infraChanged(t: Dictionary) -> void:
+	invalidateTerr(t.id)
+	G.roadRev = G.get("roadRev", 0) + 1
+	invalidateSupply()
+
+func armyStats(a: Dictionary) -> Dictionary:
+	var na = NAT(a.owner)
+	var g = genOf(na, a.gen) if a.gen != null else null
+	var tot = 0.0; var atk = 0.0; var def = 0.0; var chg = 0.0
+	for k in TK:
+		var c: float = a.t[k]
+		if c == 0: continue
+		var tm: float = 1.0 + 0.08 * g.pts[k] if g != null else 1.0
+		tot += c; atk += c * TROOP[k].atk * tm; def += c * TROOP[k].def * tm; chg += c * TROOP[k].chg
+	if tot == 0: return {"tot": 0.0, "atk": 0.0, "def": 0.0, "chg": 0.0}
+	atk /= tot; def /= tot; chg /= tot
+	if g != null:
+		atk *= 1 + 0.05 * g.pts.atk; def *= 1 + 0.05 * g.pts.def; chg += 0.03 * g.pts.chg
+	if a.get("sup", true) == false:
+		var m: float = 1 - CFG.supplyPenalty
+		atk *= m; def *= m
+	if na.get("revoltBuff", 0) > 0:
+		atk *= 1 + DIP.revoltAtk; def *= 1 + DIP.revoltDef; chg += DIP.revoltChg
+	return {"tot": tot, "atk": atk, "def": def, "chg": min(0.5, chg)}
+func fortMul(t: Dictionary) -> float:
+	var m: float = 1 + CFG.fortBase + FORT_DEV_DEF[t.dev] if t.type == "fort" else 1.0
+	if t.get("trait") == "mount": m += 0.15
+	m += terrOf(t).def
+	return max(0.5, m)
+
+## 経路探索の下ごしらえ：隣の番号・入るのにかかるターン・持ち主を詰めた配列（地図・インフラ・持ち主が変わったら作り直す）
+var PF_G = null
+var PF_KEY = ""
+var PF_TO = []          # 領地ごとの PackedInt32Array（隣の領地）
+var PF_EF = []          # 同じ並びの辺の印（1=海峡 2=川）
+var PF_COST = PackedInt32Array()
+var PF_INF3 = PackedByteArray()
+var PF_OWN = PackedInt32Array()
+var PF_OWN_KEY = -1
+func _pfPrep() -> void:
+	var key = str(G.edges.size()) + "_" + str(G.get("roadRev", 0))
+	if PF_G != G or PF_KEY != key:
+		var n: int = G.terrs.size()
+		var to = []
+		var ef = []
+		for i in n:
+			to.append(PackedInt32Array())
+			ef.append(PackedInt32Array())
+		for e in G.edges:
+			var f = (1 if e.get("sea", false) else 0) | (2 if e.get("river", false) else 0)
+			to[e.a].append(e.b); ef[e.a].append(f)
+			to[e.b].append(e.a); ef[e.b].append(f)
+		PF_TO = to
+		PF_EF = ef
+		PF_COST.resize(n)
+		PF_INF3.resize(n)
+		for t in G.terrs:
+			var inf: int = int(t.get("infra", 1))
+			PF_COST[t.id] = max(1, TERR_COST.get(t.terrain, 1) - (inf - 1))
+			PF_INF3[t.id] = 1 if inf >= 3 else 0
+		PF_G = G
+		PF_KEY = key
+		PF_OWN_KEY = -1
+	var ok: int = G.get("ownRev", 0)
+	if PF_OWN_KEY != ok or PF_OWN.size() != G.terrs.size():
+		PF_OWN.resize(G.terrs.size())
+		for t in G.terrs: PF_OWN[t.id] = t.owner
+		PF_OWN_KEY = ok
+## 経路探索：かかるターン数が最短の道（重みが小さな整数なので、ターン数ごとの箱で順に広げる）
+## 返り値 d[領地]＝かかるターン（届かなければ -1）、prev＝ひとつ前、n＝届く領地の数
+func bfsFrom(start: int, _size = null, nid = null) -> Dictionary:
+	_pfPrep()
+	var n: int = G.terrs.size()
+	var dist = PackedInt32Array()
+	dist.resize(n)
+	dist.fill(-1)
+	var prev = PackedInt32Array()
+	prev.resize(n)
+	prev.fill(-1)
+	dist[start] = 0
+	var reach = 1
+	var bk = [PackedInt32Array([start])]
+	var free: bool = nid == null or nid < 0
+	var enter = PackedInt32Array()
+	if not free:
+		enter.resize(G.nations.size() + 1)
+		enter.fill(-1)
+	var d = 0
+	while d < bk.size():
+		var B: PackedInt32Array = bk[d]
+		var i = 0
+		while i < B.size():
+			var u: int = B[i]
+			i += 1
+			if dist[u] != d: continue
+			var tos: PackedInt32Array = PF_TO[u]
+			var efs: PackedInt32Array = PF_EF[u]
+			for j in tos.size():
+				var to: int = tos[j]
+				if not free:
+					var o: int = PF_OWN[to]
+					var ok: int = enter[o + 1]
+					if ok < 0:
+						ok = 1 if canEnter(nid, to) else 0
+						enter[o + 1] = ok
+					if ok == 0: continue
+				var c: int = PF_COST[to]
+				var f: int = efs[j]
+				if f & 1 and c < 2: c = 2
+				if f & 2 and PF_INF3[to] == 0: c += 1
+				var nd: int = d + c
+				var od: int = dist[to]
+				if od >= 0 and od <= nd: continue
+				if od < 0: reach += 1
+				dist[to] = nd
+				prev[to] = u
+				while bk.size() <= nd: bk.append(PackedInt32Array())
+				bk[nd].append(to)
+		d += 1
+	return {"d": dist, "prev": prev, "start": start, "n": reach}
+## 届くならターン数、届かなければ null
+func bget(b: Dictionary, id: int):
+	var v: int = b.d[id]
+	return v if v >= 0 else null
+func bhas(b: Dictionary, id: int) -> bool: return b.d[id] >= 0
+func pathFrom(b: Dictionary, to: int):
+	if b.d[to] < 0: return null
+	var p = []
+	var c = to
+	while c != b.start:
+		p.push_front(c)
+		c = b.prev[c]
+	return p
+func findPath(from: int, to: int, size = null, nid = null):
+	if from == to: return []
+	return pathFrom(bfsFrom(from, size, nid), to)
+
+# ---------- 補給線（自国領を伝って首都と繋がっているか） ----------
+var SUP_DIRTY = true
+var SUP_TERR_KEY = ""
+func invalidateSupply() -> void: SUP_DIRTY = true
+func _armySup(a: Dictionary, set: Dictionary) -> bool:
+	if set.is_empty(): return false
+	if set.has(a.at): return true
+	for n in roadNbrs(a.at):
+		if set.has(n.to): return true
+	return false
+func refreshSupply(force := false) -> void:
+	if G == null: return
+	if not force and not SUP_DIRTY: return
+	SUP_DIRTY = false
+	var caps = []
+	for n in G.nations: caps.append(n.capital if n.alive else -1)
+	var key = str(G.get("ownRev", 0)) + "_" + str(G.get("roadRev", 0)) + "_" + str(caps)
+	var allSets = true
+	for na in G.nations:
+		if not (na.get("supSet") is Dictionary): allSets = false
+	if not force and key == SUP_TERR_KEY and allSets:
+		for na in G.nations:
+			for a in na.armies:
+				if a != null: a.sup = _armySup(a, na.supSet)
+		return
+	SUP_TERR_KEY = key
+	for t in G.terrs: t.link = 0
+	for na in G.nations:
+		var set = {}
+		if na.alive and T(na.capital).owner == na.id:
+			set[na.capital] = true
+			var q = [na.capital]
+			var i = 0
+			while i < q.size():
+				for n in roadNbrs(q[i]):
+					if not set.has(n.to) and T(n.to).owner == na.id:
+						set[n.to] = true
+						q.append(n.to)
+				i += 1
+		na.supSet = set
+		for tid in set: T(tid).link = T(tid).get("infra", 1)
+		for a in na.armies:
+			if a != null: a.sup = _armySup(a, set)
+
+# ---------- 国力の目安 ----------
+var PW_CACHE = {}
+var PW_KEY = ""
+func powKey() -> String: return str(G.turn) + "_" + str(G.get("ownRev", 0))
+func nationPower(nid: int) -> float:
+	if PW_KEY != powKey():
+		PW_CACHE = {}
+		PW_KEY = powKey()
+	if PW_CACHE.has(nid): return PW_CACHE[nid]
+	var v = nationPowerCalc(nid)
+	PW_CACHE[nid] = v
+	return v
+func nationPowerCalc(nid: int) -> float:
+	var p = 0.0
+	for t in G.terrs:
+		if t.owner != nid: continue
+		var nb = 0
+		for b in t.bld:
+			if b: nb += 1
+		p += t.dev * (120 if t.type == "city" else 80) + nb * 60 + t.pop * 0.006
+	p += nationTroops(nid) * 0.6
+	p += NAT(nid).gold * 0.05
+	return round(p)
+func nationTroops(nid: int) -> int:
+	var na = NAT(nid)
+	var s = total(na.stock)
+	for a in na.armies:
+		if a != null: s += total(a.t)
+	return s
+
+# ---------- 軍団編成・将軍 ----------
+func reinforce(a: Dictionary) -> void:
+	var p = NAT(a.owner)
+	if T(a.at).owner != a.owner: return
+	for k in TK:
+		var need: int = max(0, a.target[k] - a.t[k])
+		var give: int = min(need, p.stock[k])
+		a.t[k] += give
+		p.stock[k] -= give
+func genDesc(g: Dictionary) -> String:
+	var s = []
+	if g.pts.atk: s.append("攻+%d%%" % (g.pts.atk * 5))
+	if g.pts.def: s.append("防+%d%%" % (g.pts.def * 5))
+	if g.pts.chg: s.append("突+%d%%" % (g.pts.chg * 3))
+	for k in TK:
+		if g.pts[k]: s.append(TROOP[k].n + "+%d%%" % (g.pts[k] * 8))
+	return " ".join(s) if s.size() else "—"
+func randomPts() -> Dictionary:
+	var p = {"atk": 0, "def": 0, "chg": 0, "inf": 0, "spe": 0, "arc": 0, "cav": 0}
+	for i in 3: p[pick(GEN_ABIL).k] += 1
+	return p
+func mkGen(g: Dictionary, na: Dictionary, pts: Dictionary) -> Dictionary:
+	var gen = {"id": g.gid, "name": pick(GN_A) + pick(GN_B), "pts": pts, "army": null, "maxLed": 0}
+	g.gid += 1
+	na.gens.append(gen)
+	return gen
+func mkArmy(owner: int, idx: int, at: int) -> Dictionary:
+	return {"owner": owner, "idx": idx, "name": "第%d軍団" % (idx + 1), "at": at, "gen": null,
+		"t": {"inf": 0, "spe": 0, "arc": 0, "cav": 0}, "target": {"inf": 0, "spe": 0, "arc": 0, "cav": 0},
+		"path": [], "moved": false, "join": true, "wins": 0, "sup": true, "siege": null}
+
+# ============================================================
+#   進軍・戦闘・占領
+# ============================================================
+func _aliveFoes(tid: int, nid: int) -> Array:
+	var r = []
+	for x in armiesAt(tid):
+		if total(x.t) > 0 and atWar(x.owner, nid): r.append(x)
+	return r
+func advanceArmy(a: Dictionary) -> void:
+	if a.moved or a.path.is_empty() or total(a.t) <= 0: return
+	var next: int = a.path[0]
+	var e = edgeBetween(a.at, next)
+	var from: int = a.at
+	if e == null:
+		a.path = []
+		return
+	var t = T(next)
+	if not canEnter(a.owner, next):
+		a.path = []
+		return
+	a.moved = true
+	if a.get("prog") != next:
+		a.prog = next
+		a.progN = 0
+	a.progN = a.get("progN", 0) + 1
+	var need = stepCost(next, e)
+	if a.progN < need: return
+	a.prog = null
+	a.progN = 0
+	if not canOccupy(a.owner, next):       # 自国領・通行許可のある領地を通過する
+		var foes = _aliveFoes(next, a.owner)
+		if foes.size():
+			if powerOf([a], t, false) < powerOf(foes, t, true) * 0.9:
+				a.path = []
+				return
+			var r = await runBattle([a], foes, t)
+			invalidateSupply()
+			if r != "A":
+				a.path = []
+				return
+		a.at = next; ARMY_REV += 1
+		a.path.pop_front()
+		animMove(a, from)
+		invalidateSupply()
+		return
+	var def = _aliveFoes(next, a.owner)
+	if def.is_empty():
+		capture(next, a.owner, a)
+		a.at = next; ARMY_REV += 1
+		a.path.pop_front()
+		animMove(a, from)
+		return
+	if t.type == "fort":
+		var mode = cpuSiegeChoice(a, t, def)
+		if mode == "siege":
+			startSiege(a, t, from)
+			return
+		UI.assault = true
+	var mates = joinCandidates(a, from, next, e)
+	if mates.size(): mates = cpuJoiners(a, mates, def, t)
+	var force = [a] + mates
+	if powerOf(force, t, false) < powerOf(def, t, true) * 0.9:
+		UI.assault = false
+		a.path = []
+		return
+	for m in mates:
+		m.moved = true
+		m.path = []
+	var res = await runBattle(force, def, t)
+	UI.assault = false
+	var alive = []
+	for x in force:
+		if total(x.t) > 0: alive.append(x)
+	if res == "A":
+		capture(next, a.owner, a)
+		for x in alive:
+			var f2: int = x.at
+			x.at = next; ARMY_REV += 1
+			animMove(x, f2)
+		if a.path.size(): a.path.pop_front()
+	else:
+		a.path = []
+	invalidateSupply()
+
+# ---------- 攻城戦 ----------
+func startSiege(a: Dictionary, t: Dictionary, from: int) -> void:
+	for x in armiesAt(from):
+		if x.owner == a.owner and total(x.t) > 0 and (x == a or not x.moved):
+			x.moved = true
+			x.path = []
+			x.siege = t.id
+	t.siege = {"by": a.owner, "t0": G.turn}
+	a.path = []
+	var msg = "%s が %s を包囲した（%dターンで陥落）" % [NAT(a.owner).name, t.name, CFG.siegeTurns]
+	logWar(msg, [a.owner, t.owner], "war")
+	chron(msg, a.owner, "fall")
+	map_changed.emit("fx", null)
+func siegeArmies(t: Dictionary) -> Array:
+	if t.get("siege") == null: return []
+	var out = []
+	for n in roadNbrs(t.id):
+		for x in armiesAt(n.to):
+			if x.owner == t.siege.by and x.get("siege") == t.id and total(x.t) > 0: out.append(x)
+	return out
+func siegeTurn() -> void:
+	for t in G.terrs:
+		if t.get("siege") == null: continue
+		var by: int = t.siege.by
+		if by < 0 or not NAT(by).alive or not atWar(by, t.owner):
+			liftSiege(t, "戦いが終わった")
+			continue
+		var force = siegeArmies(t)
+		if force.is_empty():
+			liftSiege(t, "包囲軍が去った")
+			continue
+		var gar = []
+		for x in armiesAt(t.id):
+			if total(x.t) > 0: gar.append(x)
+		for g in gar:
+			for k in TK: g.t[k] = max(0, int(round(g.t[k] * (1 - CFG.siegeBleed))))
+		t.sec = clamp_f(t.sec - CFG.siegeSec, 0, 100)
+		var tot = 0
+		for x in force: tot += total(x.t)
+		NAT(by).food -= int(round(tot / 1000.0 * CFG.siegeFood))
+		destroyDead(gar)
+		var left = []
+		for x in armiesAt(t.id):
+			if total(x.t) > 0: left.append(x)
+		var over: bool = (G.turn - t.siege.t0) >= CFG.siegeTurns - 1
+		if left.is_empty() or over:
+			var lead = force[0]
+			var old: int = t.owner
+			capture(t.id, by, lead)
+			for x in left:
+				for k in TK: x.t[k] = 0
+			destroyDead(left)
+			lead.at = t.id; ARMY_REV += 1
+			for x in force: x.siege = null
+			t.siege = null
+			var msg = "%s が包囲の末に陥落（%s → %s）" % [t.name, NAT(old).name, NAT(by).name]
+			logWar(msg, [old, by], "war")
+			chron(msg, by, "fall")
+			invalidateSupply()
+func liftSiege(t: Dictionary, why: String) -> void:
+	if t.get("siege") == null: return
+	for na in G.nations:
+		for x in na.armies:
+			if x != null and x.get("siege") == t.id: x.siege = null
+	var msg = "%s の包囲が解かれた（%s）" % [t.name, why]
+	logWar(msg, [t.owner, t.siege.by])
+	chron(msg, t.owner, "gov")
+	t.siege = null
+func cpuSiegeChoice(a: Dictionary, t: Dictionary, def: Array) -> String:
+	var list = [a]
+	for x in armiesAt(a.at):
+		if x != a and x.owner == a.owner and not x.moved: list.append(x)
+	var mine = powerOf(list, t, false)
+	var dp = powerOf(def, t, true)
+	if mine >= dp * 1.6: return "assault"
+	if NAT(a.owner).food < 1500: return "assault"
+	return "siege"
+func joinCandidates(a: Dictionary, from: int, _next: int, _e) -> Array:
+	var list = []
+	for x in armiesAt(from):
+		if x == a or x.owner != a.owner or x.moved or total(x.t) <= 0: continue
+		list.append(x)
+	return list
+func cpuJoiners(a: Dictionary, mates: Array, defs: Array, t: Dictionary) -> Array:
+	var need = powerOf(defs, t, true) * 1.15
+	var out = []
+	var mine = powerOf([a], t, false)
+	for m in mates:
+		if mine >= need: break
+		out.append(m)
+		mine = powerOf([a] + out, t, false)
+	return out
+
+# ---------- 占領 ----------
+func capture(tid: int, nid: int, _byArmy = null) -> void:
+	var t = T(tid)
+	var old: int = t.owner
+	if old == nid: return
+	t.owner = nid
+	G.ownRev = G.get("ownRev", 0) + 1
+	var nm: String = NAT(nid).name
+	var on: String = NAT(old).name if old >= 0 else "無主の地"
+	logWar("%s が %s を占領しました（旧領主 %s）" % [nm, t.name, on], [nid, old], "good" if nid == followNat() else "war")
+	t.chaos = CFG.chaosTurns
+	t.sec = min(t.sec, CFG.secCapture)
+	t.pop = int(round(t.pop * 0.85))
+	if old >= 0:
+		addFatigue(old, CFG.fatTerr)
+		addFavor(old, nid, DIP.captureFavor)
+	addThreat(nid, DIP.threatCapture)
+	if old >= 0: grantCB(old, nid, "%s の奪還" % t.name, CASUS.lostTurns)
+	if old >= 0:
+		t.former = old
+		t.formerAt = G.turn
+		if t.cap: t.wasCap = old
+	if old >= 0 and atWar(nid, old) and warOf(nid, old):
+		var wid = warOf(nid, old)
+		if t.get("wTag") != wid:
+			t.wTag = wid
+			t.wOrig = old
+		if t.get("wOrig") == nid:
+			t.erase("wTag")
+			t.erase("wOrig")
+	if old >= 0 and atWar(nid, old):
+		addWarScore(nid, old, WAR.scoreTerr + (WAR.scoreCapital if t.cap else 0))
+		G.dip.taken[nid][old] = G.dip.taken[nid][old] + 1
+	chron("%s 陥落 — %s が %s より奪取" % [t.name, nm, on], nid, "fall")
+	invalidateTerr(tid)
+	flashTerr(tid)
+	if t.cap and old >= 0:
+		chron("%s の首都 %s が落ちる" % [on, t.name], old, "fall")
+		t.cap = false
+		var rest = []
+		for x in G.terrs:
+			if x.owner == old and x.type == "city": rest.append(x)
+		if rest.is_empty():
+			for x in G.terrs:
+				if x.owner == old: rest.append(x)
+		if rest.size():
+			rest.sort_custom(func(x, y): return x.dev > y.dev)
+			var best = rest[0]
+			best.cap = true
+			NAT(old).capital = best.id
+			logMsg("%s は首都を %s へ移しました" % [on, best.name])
+			chron("%s が首都を %s へ遷す" % [on, best.name], old, "gov")
+	invalidateSupply()
+	checkNations()
+func setCapital(nid: int, tid: int) -> void:
+	var na = NAT(nid)
+	for t in G.terrs:
+		if t.owner == nid and t.cap:
+			t.cap = false
+			invalidateTerr(t.id)
+	T(tid).cap = true
+	na.capital = tid
+	invalidateTerr(tid)
+	logMsg("%s の首都を %s に定めました" % [na.name, T(tid).name])
+func checkNations() -> void:
+	var all: int = G.terrs.size()
+	var cnt = {}
+	for t in G.terrs: cnt[t.owner] = cnt.get(t.owner, 0) + 1
+	for na in G.nations:
+		if not na.alive: continue
+		if cnt.get(na.id, 0) == 0:
+			na.alive = false
+			for i in na.armies.size(): na.armies[i] = null; ARMY_REV += 1
+			na.lord = null
+			na.diedAt = G.turn
+			na.rebel = 0
+			if facOf(na.id) != null: leaveFaction(na.id, "quiet")
+			logMsg("%s は滅亡しました" % na.name, "war")
+			chron("%s 滅亡" % na.name, na.id, "end")
+			for v in G.nations:
+				if v.alive and v.lord == na.id: freeVassal(v.id, "主君の滅亡")
+	warSuccession()
+	for na in G.nations:
+		if not na.alive or lordOf(na.id) != null: continue
+		var side = [na.id] + vassalsOf(na.id)
+		var ok = true
+		var n = 0
+		for t in G.terrs:
+			if t.owner >= 0 and not side.has(t.owner):
+				ok = false
+				break
+			if side.has(t.owner): n += 1
+		if ok and n >= all * 0.5:
+			endGame(na.id)
+			return
+func endGame(winner: int) -> void:
+	if G.over != null: return
+	G.over = "end"
+	G.winner = winner
+	if vassalsOf(winner).size():
+		chron("%s が属国とともに全土を平定し、天下を統一した" % NAT(winner).name, winner, "end")
+	else:
+		chron("%s が全領地を制覇し、天下を統一した" % NAT(winner).name, winner, "end")
+	UI.auto = false
+	game_over.emit(winner)
+signal game_over(winner: int)
+
+# ---------- 戦闘計算 ----------
+func sideStats(list: Array, t: Dictionary, isDef: bool) -> Dictionary:
+	var tot = 0.0; var atk = 0.0; var def = 0.0; var chg = 0.0
+	for a in list:
+		var s = armyStats(a)
+		tot += s.tot; atk += s.atk * s.tot; def += s.def * s.tot; chg += s.chg * s.tot
+	if tot == 0: return {"tot": 0.0, "atk": 0.0, "def": 0.0, "chg": 0.0}
+	atk /= tot; def /= tot; chg /= tot
+	if isDef: def *= fortMul(t)
+	return {"tot": tot, "atk": atk, "def": def, "chg": chg}
+func sumTroops(list: Array) -> float:
+	var s = 0.0
+	for a in list: s += a.t.inf + a.t.spe + a.t.arc + a.t.cav
+	return s
+func applyLoss(list: Array, amount: float) -> void:
+	var tot = sumTroops(list)
+	if tot <= 0: return
+	amount = min(amount, tot)
+	for a in list:
+		var at: float = a.t.inf + a.t.spe + a.t.arc + a.t.cav
+		if at <= 0: continue
+		var share = amount * at / tot
+		for k in TK:
+			if not a.t[k]: continue
+			a.t[k] = max(0.0, a.t[k] - share * (a.t[k] / at))
+func battleTick(A: Array, D: Array, t: Dictionary):
+	var sa = sideStats(A, t, false)
+	var sd = sideStats(D, t, true)
+	if not sa.tot or not sd.tot: return null
+	var ca = randf() < sa.chg
+	var cd = randf() < sd.chg
+	var n: float = CFG.sizeExp
+	var m = 1 - n
+	var powA = pow(sa.tot, n) * pow(sd.tot, m)
+	var powD = pow(sd.tot, n) * pow(sa.tot, m)
+	var dToD: float = powA * CFG.dmgK * (sa.atk / (sd.def * (1 - CFG.chargeIgnore if ca else 1.0))) + CFG.minDmg
+	var dToA: float = powD * CFG.dmgK * (sd.atk / (sa.def * (1 - CFG.chargeIgnore if cd else 1.0))) + CFG.minDmg
+	var am: float = CFG.assaultLoss if UI.get("assault", false) else 1.0
+	applyLoss(D, dToD)
+	applyLoss(A, dToA * am)
+	return {"ca": ca, "cd": cd, "dToD": dToD, "dToA": dToA * am, "sa": sa, "sd": sd}
+func recordBattle(A: Array, D: Array, res: String) -> void:
+	var win = A if res == "A" else D
+	var lose = D if res == "A" else A
+	if win.size(): NAT(win[0].owner).wins += 1
+	if lose.size():
+		NAT(lose[0].owner).losses += 1
+		addFatigue(lose[0].owner, CFG.fatLose)
+	if win.size() and lose.size() and atWar(win[0].owner, lose[0].owner): addWarScore(win[0].owner, lose[0].owner, WAR.scoreBattle)
+	for a in win:
+		if total(a.t) > 0: a.wins = a.get("wins", 0) + 1
+func tidy(list: Array) -> void:
+	for a in list:
+		for k in TK: a.t[k] = max(0, int(round(a.t[k])))
+func destroyDead(list: Array) -> void:
+	for a in list:
+		if total(a.t) > 0: continue
+		var na = NAT(a.owner)
+		if na.armies[a.idx] != a: continue
+		if a.gen != null:
+			var g = genOf(na, a.gen)
+			if g != null: g.army = null
+		na.armies[a.idx] = null; ARMY_REV += 1
+		if UI.selArmy == a: UI.selArmy = null
+		logWar("%s %s は壊滅しました" % [na.name, a.name], [a.owner], "war")
+		for o in G.nations:
+			if o.alive and atWar(o.id, a.owner):
+				for x in armiesAt(a.at):
+					if x.owner == o.id:
+						addWarScore(o.id, a.owner, WAR.scoreArmy)
+						break
+		chron("%s %s 壊滅（通算%d勝）" % [na.name, a.name, a.get("wins", 0)], a.owner, "war")
+func fleeArmies(list: Array, _tid: int) -> void:
+	for a in list:
+		if total(a.t) <= 0: continue
+		var opt = []
+		for n in roadNbrs(a.at):
+			if T(n.to).owner == a.owner: opt.append(n)
+		if opt.size():
+			a.at = pick(opt).to; ARMY_REV += 1
+			a.path = []
+		else:
+			for k in TK: a.t[k] = 0
+
+## CPU 同士（画面なし）
+func autoBattle(A: Array, D: Array, t: Dictionary) -> String:
+	for i in 8000:
+		var r = battleTick(A, D, t)
+		if r == null: break
+		if sumTroops(A) <= 0 or sumTroops(D) <= 0: break
+	tidy(A); tidy(D)
+	var aw = sumTroops(A) > 0
+	recordBattle(A, D, "A" if aw else "D")
+	destroyDead(A); destroyDead(D)
+	return "A" if aw else "D"
+
+## 戦闘画面：観戦中は選んだ国の戦いだけ見せる（UI が battle_finish を呼ぶまで待つ）
+signal battle_show(A: Array, D: Array, t: Dictionary)
+signal battle_done(res: String)
+func runBattle(atts: Array, defs: Array, t: Dictionary):
+	refreshSupply()
+	var A = []
+	for a in atts:
+		if a != null and total(a.t) > 0: A.append(a)
+	var lead = A[0]
+	var watch: bool = CFG.showCpuBattle and UI.speed != 3 and (concerns([lead.owner, defs[0].owner]) or UI.get("watchAll", false)) and battle_show.get_connections().size() > 0
+	if not watch or str(CFG.cpuStop) == "auto":
+		var r = autoBattle(A, defs, t)
+		logWar("%sの戦い：%s" % [t.name, (NAT(lead.owner).name + " が勝利") if r == "A" else (NAT(defs[0].owner).name + " が防衛")], [lead.owner, defs[0].owner], "war")
+		return r
+	UI.busy = true
+	battle_show.emit(A, defs, t)
+	var res = await battle_done
+	UI.busy = false
+	return res
+## 戦闘画面の終わり（UI から呼ぶ）
+func battleFinish(A: Array, D: Array, kind: String) -> String:
+	tidy(A); tidy(D)
+	var res: String
+	if kind == "retA": res = "D"
+	elif kind == "retD":
+		fleeArmies(D, -1)
+		res = "A"
+	else: res = "A" if sumTroops(A) > 0 else "D"
+	recordBattle(A, D, res)
+	destroyDead(A); destroyDead(D)
+	return res
+
+# ---------- 演出（UI に知らせるだけ） ----------
+func fxOff() -> bool: return CFG.cpuDelay <= 0
+func animMove(a: Dictionary, from: int) -> void:
+	if fxOff():
+		a.anim = null
+		return
+	a.anim = {"from": from, "t0": Time.get_ticks_msec(), "dur": 470}
+	fx.emit("move", [a, from])
+func flashTerr(tid: int) -> void:
+	if fxOff(): return
+	fx.emit("flash", tid)
+func invalidateTerr(tid: int) -> void: map_changed.emit("terr", tid)
+func invalidateMap() -> void: map_changed.emit("all", null)
+
+# ==================== k3_dip.gd ====================
+# 外交（元 4048〜）：好感度・大義・通商・不可侵・従属・脅威・戦争と講和
+
+var DIP = {
+	"passMin": 60, "allyMin": 80, "peaceMin": 15,
+	"giftCost": 5000, "giftFavor": 12, "giftCool": 3,
+	"warFavor": -100, "warOthers": -26, "warAllyOthers": -8, "justMul": 0.35, "captureFavor": -6,
+	"driftPeace": 0.5, "driftAlly": 1.2, "driftWar": -1.5, "driftCap": 62,
+	"driftCommon": 1.6, "driftCommonCap": 95,
+	"cpuWarChance": {"aggr": 0.28, "bal": 0.14, "def": 0.07, "econ": 0.05},
+	"cpuWarNeed": {"aggr": 40, "bal": 58, "def": 75, "econ": 85},
+	"cpuAmbition": 0.8, "cpuAmbitionMax": 30, "cpuPeaceTurns": 12,
+	"allyTurns": 20, "allyRenewMin": 70, "peaceCool": 5, "reach": 2,
+	"vassalRatio": 1.7, "vassalWarRatio": 1.3, "vassalFavor": 35, "tribute": 0.15,
+	"unrestBase": 2.2, "unrestPower": 6, "unrestWar": 1.5, "unrestMax": 100,
+	"revoltTurns": 15, "revoltFree": 20, "revoltAtk": 0.45, "revoltDef": 0.35, "revoltChg": 0.05, "revoltProd": 0.25,
+	"cpuVassalAsk": 0.25,
+	"annexRatio": 4.0, "annexHold": 30, "annexUnrest": 30, "absorbRate": 2, "annexEdge": 100, "annexThreat": 40,
+	"annexOthers": -30, "annexTroop": 0.3, "annexGold": 0.5, "annexGens": 2, "cpuAnnexChance": 0.5,
+	"aidCool": 3, "aidGold": 10000, "aidGoldFav": 10, "aidGoldUnrest": -14,
+	"aidFood": 2000, "aidFoodFav": 8, "aidFoodUnrest": -10,
+	"aidTroop": 3000, "aidTroopFav": 12, "aidTroopUnrest": -16,
+	"threatWar": 34, "threatCapture": 9, "threatDecay": 0.94, "threatPowerW": 110, "threatMin": 35,
+	"threatDrift": -1.4, "threatAllyEase": 16, "threatWarBonus": 0.85, "dangerWeight": 90, "guardDanger": 0.30, "threatPrep": 10,
+	"calmTurns": 10, "calmThreatMul": 2.5, "prepTurns": 2, "prepExpire": 6, "prepFavor": -32, "prepOthers": -10,
+	"truceTurns": 10, "fatiguePeace": 60,
+}
+var CASUS = {"lostTurns": 30, "betrayTurns": 30, "unjustTurns": 20, "fabGold": 6000, "fabTurns": 6, "fabKeep": 25,
+	"fabSpot": 0.3, "noSec": 15, "noFat": 25, "noFavor": -20, "noThreat": 1.8, "disputeRate": 0.004, "disputeTurns": 20}
+var TRADE = {"min": 30, "max": 4, "rate": 0.10, "favor": 1, "favorCap": 80}
+var PACT = {"min": 40, "turns": 20, "renewMin": 50, "breakFavor": -25, "breakOthers": -10, "favor": 0.5, "favorCap": 70}
+const REL_NAME := {"peace": "平和", "tense": "緊張", "war": "戦争中", "ally": "同盟"}
+const REL_COL := {"peace": "#9b9484", "tense": "#d29b3c", "war": "#c0504a", "ally": "#6d9c63"}
+
+func _mk(n: int, v) -> Array:
+	var out = []
+	for a in n:
+		var row = []
+		row.resize(n)
+		row.fill(v)
+		out.append(row)
+	return out
+func initDip(g: Dictionary) -> Dictionary:
+	var n: int = g.nations.size()
+	var favor = []
+	for a in n:
+		var row = []
+		for b in n: row.append(100 if a == b else ri(25, 55))
+		favor.append(row)
+	g.dip = {
+		"state": _mk(n, "peace"), "favor": favor,
+		"pass": _mk(n, false), "since": _mk(n, 1), "gift": _mk(n, -9),
+		"prepAt": _mk(n, 0), "prepBy": _mk(n, -1), "truce": _mk(n, 0), "cool": _mk(n, 0), "allyUntil": _mk(n, 0),
+		"goal": _mk(n, "defend"), "score": _mk(n, 0), "taken": _mk(n, 0), "capId": _mk(n, null), "aid": _mk(n, -9),
+		"cbUntil": _mk(n, 0), "cbWhy": _mk(n, ""), "fab": _mk(n, 0), "trade": _mk(n, false), "pact": _mk(n, 0),
+		"feud": _mk(n, 0), "warId": _mk(n, 0), "peaceAt": _mk(n, -99),
+	}
+	g.wars = {}
+	g.warSeq = 0
+	for na in g.nations:
+		na.lord = null; na.unrest = 0; na.revoltBuff = 0; na.freeUntil = 0; na.threat = 0
+	g.topThreat = null
+	return g
+
+func relState(a: int, b: int) -> String: return "self" if a == b else G.dip.state[a][b]
+func isTense(a: int, b: int) -> bool: return a != b and G.dip.state[a][b] == "tense"
+func inCalm() -> bool: return G.turn <= DIP.calmTurns
+func truceLeft(a: int, b: int) -> int: return 0 if a == b else max(0, G.dip.truce[a][b] - G.turn)
+func coolLeft(a: int, b: int) -> int: return 0 if a == b else max(0, G.dip.cool[a][b] - G.turn)
+func prepLeft(a: int, b: int) -> int: return max(0, G.dip.prepAt[a][b] + DIP.prepTurns - G.turn)
+func prepBy(a: int, b: int) -> int: return G.dip.prepBy[a][b]
+func canPrepare(a: int, b: int) -> bool:
+	return a != b and NAT(a).alive and NAT(b).alive and relState(a, b) == "peace" \
+		and truceLeft(a, b) <= 0 and coolLeft(a, b) <= 0 and pactLeft(a, b) <= 0 and not sameFaction(a, b)
+func canDeclareWar(a: int, b: int) -> bool: return isTense(a, b) and prepBy(a, b) == a and prepLeft(a, b) <= 0
+func atWar(a: int, b: int) -> bool: return a != b and a >= 0 and b >= 0 and G.dip.state[a][b] == "war"
+func isAlly(a: int, b: int) -> bool: return a != b and a >= 0 and b >= 0 and G.dip.state[a][b] == "ally"
+func favorOf(a: int, b: int) -> float: return G.dip.favor[a][b]
+func canPass(mover: int, owner: int) -> bool:
+	return owner < 0 or mover == owner or G.dip.pass[owner][mover] or isAlly(mover, owner) or sameFaction(mover, owner)
+func addFavor(a: int, b: int, v: float) -> void:
+	if a == b or a < 0 or b < 0: return
+	G.dip.favor[a][b] = clamp_f(G.dip.favor[a][b] + v, -100, 100)
+func setRel(a: int, b: int, st: String) -> void:
+	G.dip.state[a][b] = st; G.dip.state[b][a] = st
+	G.dip.since[a][b] = G.turn; G.dip.since[b][a] = G.turn
+
+# ---------- 大義名分 ----------
+func cbOf(a: int, b: int) -> String:
+	if a == b or a < 0 or b < 0 or not NAT(b).alive: return ""
+	if isTopThreat(b): return "最大の脅威への対抗"
+	if prepBy(a, b) == b: return "相手が軍備を進めている"
+	if G.dip.cbUntil[a][b] > G.turn: return G.dip.cbWhy[a][b] if G.dip.cbWhy[a][b] != "" else "大義"
+	for c in campOf(a):
+		if c != a and atWar(c, b): return "%s が戦っている相手" % NAT(c).name
+	return ""
+func hasCB(a: int, b: int) -> bool: return cbOf(a, b) != ""
+func cbLeft(a: int, b: int) -> int: return max(0, G.dip.cbUntil[a][b] - G.turn)
+func fabLeft(a: int, b: int) -> int: return max(0, G.dip.fab[a][b] - G.turn)
+func grantCB(a: int, b: int, why: String, turns: int) -> void:
+	if a == b or a < 0 or b < 0: return
+	if G.turn + turns < G.dip.cbUntil[a][b]: return
+	G.dip.cbUntil[a][b] = G.turn + turns
+	G.dip.cbWhy[a][b] = why
+func fabReason(a: int, b: int) -> String:
+	if atWar(a, b): return "戦争中です"
+	if hasCB(a, b): return "すでに大義があります（%s）" % cbOf(a, b)
+	if fabLeft(a, b) > 0: return "口実を用意しています（あと%dターン）" % fabLeft(a, b)
+	if NAT(a).gold < CASUS.fabGold: return "ゴールドが足りません（%sG）" % fmt(CASUS.fabGold)
+	return ""
+func startFabricate(a: int, b: int) -> bool:
+	if fabReason(a, b) != "": return false
+	NAT(a).gold -= CASUS.fabGold
+	G.dip.fab[a][b] = G.turn + CASUS.fabTurns
+	return true
+func fabTurn() -> void:
+	var n: int = G.nations.size()
+	for a in n:
+		for b in n:
+			var f: int = G.dip.fab[a][b]
+			if not f: continue
+			if not NAT(a).alive or not NAT(b).alive:
+				G.dip.fab[a][b] = 0
+				continue
+			if G.turn < f - 1: continue
+			G.dip.fab[a][b] = 0
+			grantCB(a, b, "領有権の主張", CASUS.fabKeep)
+			var spot = randf() < CASUS.fabSpot
+			if spot:
+				addFavor(b, a, -20)
+				for c in G.nations:
+					if c.alive and c.id != a and c.id != b: addFavor(c.id, a, -4)
+			var msg = "%s が %s への領有権を主張%s" % [NAT(a).name, NAT(b).name, "（工作が露見）" if spot else ""]
+			logMsg(msg)
+			chron(msg, a, "dip")
+
+# ---------- 通商協定 ----------
+func isTrade(a: int, b: int) -> bool: return a != b and G.dip.trade[a][b]
+func tradePartners(a: int) -> Array:
+	var r = []
+	for o in G.nations:
+		if o.alive and isTrade(a, o.id): r.append(o.id)
+	return r
+func tradeEase(nid: int) -> float: return PERSONA.get(NAT(nid).persona, PERSONA.bal).tradeW
+func tradeReason(a: int, b: int) -> String:
+	if isTrade(a, b): return "すでに通商しています"
+	var st = relState(a, b)
+	if st == "war" or st == "tense": return "戦争・緊張中は結べません"
+	if not natNear(a, b): return "遠すぎて通商できません（隣国とその隣の国まで）"
+	if tradePartners(a).size() >= TRADE.max: return "通商協定は %d 国までです" % TRADE.max
+	if tradePartners(b).size() >= TRADE.max: return "%s は通商相手が埋まっています" % NAT(b).name
+	return ""
+func tradeNeed(b: int) -> float: return TRADE.min - tradeEase(b)
+func tradeSwap(b: int, a: int):
+	var ps = tradePartners(b)
+	if ps.size() < TRADE.max or favorOf(b, a) < tradeNeed(b) + 15: return null
+	ps.sort_custom(func(x, y): return favorOf(b, x) < favorOf(b, y))
+	var worst = ps[0]
+	return worst if worst != null and favorOf(b, worst) < favorOf(b, a) else null
+func makeTrade(a: int, b: int) -> void:
+	G.dip.trade[a][b] = true; G.dip.trade[b][a] = true
+	var msg = "%s と %s が通商協定を結ぶ" % [NAT(a).name, NAT(b).name]
+	logMsg(msg)
+	chron(msg, a, "dip")
+func endTrade(a: int, b: int, why := "") -> void:
+	if not isTrade(a, b): return
+	G.dip.trade[a][b] = false; G.dip.trade[b][a] = false
+	var msg = "%s と %s の通商が途絶える%s" % [NAT(a).name, NAT(b).name, ("（" + why + "）") if why != "" else ""]
+	logMsg(msg)
+	chron(msg, a, "dip")
+func tradeIncome(nid: int) -> int:
+	var me = NAT(nid)
+	if not me.alive: return 0
+	var g = 0.0
+	for o in tradePartners(nid): g += min(me.get("goldIn", 0), NAT(o).get("goldIn", 0)) * TRADE.rate
+	return int(round(g))
+
+# ---------- 不可侵条約 ----------
+func pactLeft(a: int, b: int) -> int: return 0 if a == b else max(0, G.dip.pact[a][b] - G.turn)
+func pactEase(nid: int) -> float: return PERSONA.get(NAT(nid).persona, PERSONA.bal).pactW
+func pactNeed(b: int) -> float: return PACT.min - pactEase(b)
+func makePact(a: int, b: int) -> void:
+	G.dip.pact[a][b] = G.turn + PACT.turns; G.dip.pact[b][a] = G.turn + PACT.turns
+	var msg = "%s と %s が不可侵条約を結ぶ（%dターン）" % [NAT(a).name, NAT(b).name, PACT.turns]
+	logMsg(msg)
+	chron(msg, a, "dip")
+func breakPact(a: int, b: int) -> void:
+	if pactLeft(a, b) <= 0: return
+	G.dip.pact[a][b] = 0; G.dip.pact[b][a] = 0
+	addFavor(b, a, PACT.breakFavor)
+	for c in G.nations:
+		if c.alive and c.id != a and c.id != b: addFavor(c.id, a, PACT.breakOthers)
+	grantCB(b, a, "不可侵条約の破棄", CASUS.betrayTurns)
+	addThreat(a, 10)
+	var msg = "%s が %s との不可侵条約を破棄" % [NAT(a).name, NAT(b).name]
+	logMsg(msg, "war")
+	chron(msg, a, "dip")
+	dipReport("unpact", a, b, true, "%s は %dターンの大義を得た" % [NAT(b).name, CASUS.betrayTurns])
+func peaceTiesTurn() -> void:
+	var n: int = G.nations.size()
+	for a in n:
+		for b in range(a + 1, n):
+			if not NAT(a).alive or not NAT(b).alive:
+				G.dip.trade[a][b] = false; G.dip.trade[b][a] = false
+				G.dip.pact[a][b] = 0; G.dip.pact[b][a] = 0
+				continue
+			if isTrade(a, b) and not natNear(a, b): endTrade(a, b, "国が遠く隔たった")
+			if isTrade(a, b):
+				if favorOf(a, b) < TRADE.favorCap: addFavor(a, b, TRADE.favor)
+				if favorOf(b, a) < TRADE.favorCap: addFavor(b, a, TRADE.favor)
+			var fric = clamp_f(1 + (60 - (favorOf(a, b) + favorOf(b, a)) / 2) / 40, 0.4, 2.5)
+			if relState(a, b) == "peace" and pactLeft(a, b) <= 0 \
+					and randf() < CASUS.disputeRate * fric and nationsAdjacent(a, b):
+				grantCB(a, b, "国境紛争", CASUS.disputeTurns); grantCB(b, a, "国境紛争", CASUS.disputeTurns)
+				addFavor(a, b, -8); addFavor(b, a, -8)
+				var msg = "%s と %s の国境で紛争 — 互いに大義を得る" % [NAT(a).name, NAT(b).name]
+				logMsg(msg)
+				chron(msg, a, "dip")
+			var p: int = G.dip.pact[a][b]
+			if p:
+				if favorOf(a, b) < PACT.favorCap: addFavor(a, b, PACT.favor)
+				if favorOf(b, a) < PACT.favorCap: addFavor(b, a, PACT.favor)
+				if G.turn >= p - 1:
+					if favorOf(a, b) >= PACT.renewMin and favorOf(b, a) >= PACT.renewMin and relState(a, b) == "peace":
+						G.dip.pact[a][b] = G.turn + 1 + PACT.turns; G.dip.pact[b][a] = G.turn + 1 + PACT.turns
+						chron("%s と %s が不可侵条約を更新" % [NAT(a).name, NAT(b).name], a, "dip")
+					else:
+						G.dip.pact[a][b] = 0; G.dip.pact[b][a] = 0
+						var msg2 = "%s と %s の不可侵条約が満了" % [NAT(a).name, NAT(b).name]
+						logMsg(msg2)
+						chron(msg2, a, "dip")
+
+# ---------- 同盟・従属 ----------
+func lordOf(nid: int):
+	if nid < 0: return null
+	var n = NAT(nid)
+	return n.lord if n.lord != null and NAT(n.lord).alive else null
+func vassalsOf(nid: int) -> Array:
+	var r = []
+	for n in G.nations:
+		if n.alive and n.lord == nid: r.append(n.id)
+	return r
+func isVassal(a: int, b: int) -> bool: return lordOf(a) == b
+func allyUntil(a: int, b: int) -> int: return G.dip.allyUntil[a][b]
+func allyLeft(a: int, b: int) -> float:
+	if not isAlly(a, b): return 0
+	if isVassal(a, b) or isVassal(b, a): return INF
+	return max(0, allyUntil(a, b) - G.turn)
+func campOf(nid: int) -> Array:
+	var set = {nid: true}
+	var l = lordOf(nid)
+	if l != null: set[l] = true
+	for v in vassalsOf(nid): set[v] = true
+	for o in G.nations:
+		if o.alive and isAlly(nid, o.id): set[o.id] = true
+	return set.keys()
+func relLabel(a: int, b: int) -> String:
+	if a == b: return "自国"
+	if isVassal(b, a): return "属国"
+	if isVassal(a, b): return "主君"
+	return REL_NAME.get(relState(a, b), "—")
+func relLabelCol(a: int, b: int) -> String:
+	if isVassal(b, a) or isVassal(a, b): return "#c9a227"
+	return REL_COL.get(relState(a, b), "#9b9484")
+
+# ---------- 脅威度 ----------
+var THR_KEY = ""
+var THR_C = {"t": {}}
+func thrCache() -> Dictionary:
+	var k = str(G.turn) + "_" + str(G.get("ownRev", 0))
+	if THR_KEY != k:
+		THR_KEY = k
+		THR_C = {"t": {}}
+	return THR_C
+func addThreat(nid: int, v: float) -> void:
+	if nid < 0: return
+	var n = NAT(nid)
+	n.threat = clamp_f(n.get("threat", 0) + v, 0, 400)
+	THR_KEY = ""
+func threatOf(nid: int) -> float:
+	var c = thrCache()
+	if c.t.has(nid): return c.t[nid]
+	var v = threatCalc(nid)
+	c.t[nid] = v
+	return v
+func threatCalc(nid: int) -> float:
+	var n = NAT(nid)
+	if not n.alive: return 0.0
+	var tot = 0.0
+	var live = 0
+	for x in G.nations:
+		if x.alive:
+			tot += nationPower(x.id)
+			live += 1
+	if tot == 0: tot = 1
+	var over: float = max(0.0, nationPower(nid) / tot - 1.0 / max(1, live))
+	return n.get("threat", 0) + over * DIP.threatPowerW
+func topThreat():
+	var c = thrCache()
+	if c.has("top"): return c.top
+	c.top = topThreatCalc()
+	return c.top
+func topThreatCalc():
+	var id = null
+	var v = 0.0
+	for n in G.nations:
+		if not n.alive: continue
+		var t = threatOf(n.id)
+		if t > v:
+			v = t
+			id = n.id
+	var cur = G.topThreat
+	if cur != null and NAT(cur).alive:
+		var cv = threatOf(cur)
+		if cv >= DIP.threatMin * 0.75 and cv >= v * 0.87: return {"id": cur, "v": cv}
+	return {"id": id, "v": v} if v >= DIP.threatMin else null
+func isTopThreat(nid: int) -> bool:
+	var t = topThreat()
+	return t != null and t.id == nid
+func threatLabel(v: float) -> String:
+	return "静穏" if v < 20 else ("警戒" if v < 40 else ("脅威" if v < 70 else "大いなる脅威"))
+func threatColor(v: float) -> String:
+	return "#9b9484" if v < 20 else ("#4d5666" if v < 40 else ("#c9a227" if v < 70 else "#c0504a"))
+func decayThreat() -> void:
+	THR_KEY = ""
+	for n in G.nations: n.threat = max(0.0, n.get("threat", 0) * DIP.threatDecay)
+	var t = topThreat()
+	var cur = t.id if t != null else null
+	if cur != G.topThreat:
+		if cur != null:
+			var msg = "%s が諸国から最大の脅威とみなされる" % NAT(cur).name
+			logMsg(msg, "war")
+			chron(msg, cur, "dip")
+		G.topThreat = cur
+
+# 侵入・占領の可否
+func canEnter(nid: int, tid: int) -> bool:
+	var o: int = T(tid).owner
+	return o < 0 or o == nid or atWar(nid, o) or canPass(nid, o)
+func canOccupy(nid: int, tid: int) -> bool:
+	var o: int = T(tid).owner
+	return o >= 0 and o != nid and atWar(nid, o)
+func enterReason(nid: int, tid: int) -> String:
+	var o: int = T(tid).owner
+	if o < 0 or o == nid or atWar(nid, o) or canPass(nid, o): return ""
+	return "%s とは平和状態です。通行許可を得るか宣戦布告が必要です" % NAT(o).name
+func warJust(a: int, b: int) -> float: return DIP.justMul if hasCB(a, b) else 1.0
+
+# ============================================================
+#   戦争（陣営）
+# ============================================================
+func warOf(x: int, y: int) -> int:
+	if x < 0 or y < 0: return 0
+	return G.dip.warId[x][y]
+func warObj(x: int, y: int):
+	return G.wars.get(warOf(x, y))
+func newWar(a: int, b: int) -> int:
+	G.warSeq = G.get("warSeq", 0) + 1
+	var id: int = G.warSeq
+	G.wars[id] = {"id": id, "a": a, "b": b, "sA": [a], "sB": [b], "t0": G.turn, "sc": {}, "vp0": {a: natVP(a), b: natVP(b)}}
+	setWarId(a, b, id)
+	return id
+func setWarId(x: int, y: int, id: int) -> void:
+	G.dip.warId[x][y] = id; G.dip.warId[y][x] = id
+func joinSide(id: int, nid: int, enemy: int) -> void:
+	var W = G.wars.get(id)
+	if W == null: return
+	var side: Array = W.sB if W.sA.has(enemy) else W.sA
+	if not side.has(nid): side.append(nid)
+	if not W.vp0.has(nid): W.vp0[nid] = natVP(nid)
+	setWarId(nid, enemy, id)
+func sideOf(W: Dictionary, nid: int):
+	if W.sA.has(nid): return W.sA
+	if W.sB.has(nid): return W.sB
+	return null
+func otherSide(W: Dictionary, nid: int) -> Array: return W.sB if W.sA.has(nid) else W.sA
+func warLeaders(x: int, y: int) -> bool:
+	var W = warObj(x, y)
+	return W == null or (W.a == x and W.b == y) or (W.a == y and W.b == x)
+func addWarPts(x: int, y: int, v: float) -> void:
+	var W = warObj(x, y)
+	if W != null and v > 0:
+		W.sc[x] = W.sc.get(x, 0) + v
+		W.act = G.turn
+func warTurn() -> void:
+	for W in G.wars.values().duplicate():
+		if not G.wars.has(W.id): continue
+		for n in W.sA + W.sB:
+			if not inThisWar(W, n): continue
+			if not W.vp0.has(n): W.vp0[n] = natVP(n)
+			var sp = surrenderProg(W, n)
+			if sp >= surrenderLimit(n): capitulate(W, n, "国の %d%% を占領された" % int(round(sp * 100)))
+		if not G.wars.has(W.id): continue
+		warSuccession()
+		if not G.wars.has(W.id): continue
+		var age: int = G.turn - W.t0
+		var idle: int = G.turn - W.get("act", W.t0)
+		if (age >= 20 and idle >= 10) or age >= 50:
+			var lines = endWar(W, null)
+			dipReport("peace", W.a, W.b, true, ("長い戦に双方が疲れ果てた" if age >= 50 else "戦線が膠着した") + (("／" + "／".join(lines)) if lines.size() else ""))
+func _lostSide(W: Dictionary, S_: Array) -> bool:
+	for n in S_:
+		if NAT(n).alive and not W.get("capd", []).has(n): return false
+	return true
+func _actSide(W: Dictionary, S_: Array) -> Array:
+	var r = []
+	for n in S_:
+		if inThisWar(W, n): r.append(n)
+	return r
+func warSuccession() -> void:
+	for W in G.wars.values().duplicate():
+		if not G.wars.has(W.id): continue
+		var lA = _lostSide(W, W.sA)
+		var lB = _lostSide(W, W.sB)
+		if lA and not lB:
+			endWar(W, {"winner": W.sB, "full": true})
+			continue
+		if lB and not lA:
+			endWar(W, {"winner": W.sA, "full": true})
+			continue
+		var aA = _actSide(W, W.sA)
+		var aB = _actSide(W, W.sB)
+		if aA.is_empty() or aB.is_empty():
+			if aA.size() and aB.is_empty(): endWar(W, {"winner": W.sA, "full": lB})
+			elif aB.size() and aA.is_empty(): endWar(W, {"winner": W.sB, "full": lA})
+			else: endWar(W, null)
+			continue
+		for k in ["a", "b"]:
+			if inThisWar(W, W[k]): continue
+			var cand = aA if k == "a" else aB
+			cand.sort_custom(func(x, y): return W.sc.get(x, 0) > W.sc.get(y, 0))
+			if cand.size(): W[k] = cand[0]
+
+# ---------- 降伏と講和会議 ----------
+const VP_K := 3
+func vpOf(t: Dictionary) -> float: return 1 + t.dev * 1.5 + (12 if t.cap else 0) + (1 if t.type == "city" else 0) + t.pop / 8000.0
+func natVP(n: int) -> float:
+	var s = 0.0
+	for t in G.terrs:
+		if t.owner == n: s += vpOf(t)
+	return s
+func surrenderLimit(n: int) -> float:
+	var na = NAT(n)
+	var base: float = {"def": 0.78, "aggr": 0.7, "bal": 0.66, "econ": 0.58}.get(na.persona, 0.66)
+	return clamp_f(base - na.get("fatigue", 0) / 250.0, 0.35, 0.85)
+func surrenderProg(W: Dictionary, n: int) -> float:
+	var base: float = W.vp0.get(n, 0)
+	if not base: base = natVP(n)
+	if not base: base = 1
+	var foe = otherSide(W, n)
+	var occ = 0.0
+	for t in G.terrs:
+		if t.get("wTag") == W.id and t.get("wOrig") == n and foe.has(t.owner): occ += vpOf(t)
+	return clamp_f(occ / base, 0, 1)
+func inThisWar(W: Dictionary, n: int) -> bool:
+	if n < 0 or not NAT(n).alive: return false
+	for o in G.nations:
+		if o.alive and warOf(n, o.id) == W.id and atWar(n, o.id): return true
+	return false
+func capitulate(W: Dictionary, n: int, why := "") -> void:
+	for o in G.nations:
+		if warOf(n, o.id) != W.id or not atWar(n, o.id): continue
+		setRel(n, o.id, "peace")
+		setWarId(n, o.id, 0)
+		G.dip.truce[n][o.id] = G.turn + DIP.truceTurns; G.dip.truce[o.id][n] = G.turn + DIP.truceTurns
+	if not W.has("capd"): W.capd = []
+	if not W.capd.has(n): W.capd.append(n)
+	var msg = "%s が降伏する%s" % [NAT(n).name, ("（" + why + "）") if why != "" else ""]
+	if concerns([n] + otherSide(W, n)): logMsg(msg, "war")
+	chron(msg, n, "fall")
+	dipReport("surrender", n, otherSide(W, n)[0], true, why)
+	invalidateSupply()
+
+# ==================== k3b_dip.gd ====================
+# 外交 続き（元 4570〜5097）：講和会議・宣戦・和平・同盟・知らせ・従属
+
+## 戦争の終わり：講和会議。opts.winner = 勝った陣営の配列（なければ現状のままの講和）、opts.full = 相手陣営が全員降伏した
+func endWar(W, opts) -> Array:
+	if W == null or not G.wars.has(W.id): return []
+	if opts == null: opts = {}
+	var lines = []
+	var got = {}
+	var back = {}
+	var winner = opts.get("winner")
+	var full: bool = opts.get("full", false)
+	for S_ in [W.sA, W.sB]:
+		var O: Array = W.sB if S_ == W.sA else W.sA
+		var winning: bool = winner != null and winner == S_
+		var losing: bool = winner != null and winner != S_
+		if losing: continue
+		var mem = []
+		for n in S_:
+			if NAT(n).alive: mem.append(n)
+		mem.sort_custom(func(x, y): return W.sc.get(x, 0) > W.sc.get(y, 0))
+		if mem.is_empty(): continue
+		var pool = {}
+		for t in G.terrs:
+			if t.get("wTag") == W.id and O.has(t.get("wOrig")) and S_.has(t.owner): pool[t.id] = t
+		if winning and full:
+			for t in G.terrs:
+				if O.has(t.owner) and NAT(t.owner).alive and not t.cap: pool[t.id] = t
+		var budget = {}
+		var mine = {}
+		for n in mem:
+			budget[n] = W.sc.get(n, 0) * (1.0 if winning else 0.6)
+			mine[n] = {}
+		for round_ in 400:
+			if pool.is_empty(): break
+			var any = false
+			for n in mem:
+				var best = null
+				var bs = -INF
+				var bc = 0.0
+				for t in pool.values():
+					var held: bool = t.owner == n
+					var cost: float = vpOf(t) * VP_K * (0.5 if held else 1.0)
+					if cost > budget[n]: continue
+					var adj = held
+					if not adj:
+						for nb in roadNbrs(t.id):
+							if T(nb.to).owner == n or mine[n].has(nb.to):
+								adj = true
+								break
+					if not adj: continue
+					var sc: float = vpOf(t) / cost + (1 if held else 0)
+					if sc > bs:
+						bs = sc; best = t; bc = cost
+				if best == null: continue
+				budget[n] -= bc
+				pool.erase(best.id)
+				mine[n][best.id] = true
+				if best.owner != n:
+					_giveTerr(best, n)
+					best.chaos = max(best.chaos, 2)
+					best.sec = min(best.sec, CFG.secCapture + 10)
+				got[n] = got.get(n, 0) + 1
+				any = true
+			if not any: break
+		for t in pool.values():
+			if t.get("wTag") == W.id and t.owner != t.wOrig and NAT(t.wOrig).alive:
+				_giveTerr(t, t.wOrig)
+				back[t.wOrig] = back.get(t.wOrig, 0) + 1
+		if winning and full:
+			var top = mem[0]
+			var lead: int = W.b if S_ == W.sA else W.a
+			if top != null and NAT(lead).alive and lordOf(lead) == null and budget[top] >= natVP(lead) * VP_K * 0.5 and canAskVassal(top, lead):
+				W.puppet = [top, lead]
+	if winner != null:
+		var L: Array = W.sB if winner == W.sA else W.sA
+		for t in G.terrs:
+			if t.get("wTag") == W.id and L.has(t.owner) and winner.has(t.get("wOrig")) and NAT(t.wOrig).alive:
+				_giveTerr(t, t.wOrig)
+				back[t.wOrig] = back.get(t.wOrig, 0) + 1
+	if got.size():
+		var parts = []
+		for n in got: parts.append("%s %d領地" % [NAT(n).name, got[n]])
+		lines.append("講和会議：" + "、".join(parts))
+	if back.size():
+		var parts2 = []
+		for n in back: parts2.append("%s へ %d領地" % [NAT(n).name, back[n]])
+		lines.append("返還：" + "、".join(parts2))
+	for x in G.nations:
+		for y in G.nations:
+			if x.id >= y.id or warOf(x.id, y.id) != W.id: continue
+			setWarId(x.id, y.id, 0)
+			if not atWar(x.id, y.id): continue
+			setRel(x.id, y.id, "peace")
+			G.dip.truce[x.id][y.id] = G.turn + DIP.truceTurns; G.dip.truce[y.id][x.id] = G.turn + DIP.truceTurns
+			G.dip.favor[x.id][y.id] = max(G.dip.favor[x.id][y.id], 10)
+			G.dip.favor[y.id][x.id] = max(G.dip.favor[y.id][x.id], 10)
+	for n in W.sA + W.sB:
+		if NAT(n).alive: addFatigue(n, -15)
+	for t in G.terrs:
+		if t.get("wTag") == W.id:
+			t.erase("wTag"); t.erase("wOrig")
+	G.wars.erase(W.id)
+	if W.has("puppet"):
+		makeVassal(W.puppet[0], W.puppet[1], "講和会議による従属")
+		lines.append("%s は %s の属国に" % [NAT(W.puppet[1]).name, NAT(W.puppet[0]).name])
+	var sa = []
+	var sb = []
+	for n in W.sA:
+		if NAT(n).alive: sa.append(NAT(n).name)
+	for n in W.sB:
+		if NAT(n).alive: sb.append(NAT(n).name)
+	var head: String = ("%s 陣営の勝利" % NAT(W.a if winner == W.sA else W.b).name) if winner != null else "現状のままの講和"
+	var msg = "%s と %s の戦争が終わる — %s（%s 対 %s）" % [NAT(W.a).name, NAT(W.b).name, head, "・".join(sa), "・".join(sb)]
+	if lines.size(): msg += "：" + "／".join(lines)
+	if concerns(W.sA + W.sB): logMsg(msg, "good")
+	chron(msg, W.a, "dip")
+	invalidateSupply()
+	return lines
+func _giveTerr(t: Dictionary, n: int) -> void:
+	if t.owner != n:
+		t.owner = n
+		invalidateTerr(t.id)
+		G.ownRev = G.get("ownRev", 0) + 1
+
+func declareWar(a: int, b: int, _byPlayer := false) -> void:
+	if a == b or atWar(a, b): return
+	var wasAlly = isAlly(a, b)
+	var why = cbOf(a, b)
+	var just = warJust(a, b)
+	if pactLeft(a, b) > 0: breakPact(a, b)
+	endTrade(a, b, "開戦")
+	G.dip.feud[a][b] += 1; G.dip.feud[b][a] += 1
+	G.dip.prepBy[a][b] = -1; G.dip.prepBy[b][a] = -1
+	setRel(a, b, "war")
+	newWar(a, b)
+	G.dip.pass[a][b] = false; G.dip.pass[b][a] = false
+	addFavor(b, a, DIP.warFavor + (-20 if wasAlly else 0))
+	for c in G.nations:
+		if c.id == a or c.id == b or not c.alive: continue
+		var base: float = DIP.warAllyOthers if isAlly(c.id, a) else DIP.warOthers
+		addFavor(c.id, a, base * (DIP.justMul if isTopThreat(b) and c.id != b else 1.0))
+	addThreat(a, DIP.threatWar * (DIP.calmThreatMul if inCalm() else 1.0) * just)
+	if why == "":
+		for t in G.terrs:
+			if t.owner == a: t.sec = clamp_f(t.sec - CASUS.noSec, 0, 100)
+		addFatigue(a, CASUS.noFat)
+		addThreat(a, DIP.threatWar * (CASUS.noThreat - 1))
+		for c in G.nations:
+			if not c.alive or c.id == a or c.id == b: continue
+			addFavor(c.id, a, CASUS.noFavor)
+			if nationsAdjacent(c.id, a): grantCB(c.id, a, "%s の不義の戦" % NAT(a).name, CASUS.unjustTurns)
+	warInit(a, b, cpuWarGoal(a, b))
+	var msg = "%s が %s に宣戦布告（目標：%s）" % [NAT(a).name, NAT(b).name, goalLabel(a, b)]
+	logMsg(msg, "war")
+	chron(msg, a, "dip")
+	var note = ("同盟を破っての開戦／" if wasAlly else "") + (("大義：" + why) if why != "" else "大義なき開戦（国内の治安・諸国の評判が大きく下がる）") + "／目標：" + goalLabel(a, b)
+	var dv = desireVs(a, b)
+	if dv != null: note += "／望み：" + desireText(dv)
+	dipReport("war", a, b, true, note)
+	joinWarByPact(a, b)
+	factionCallToArms(a, b)
+	invalidateSupply()
+func makePeace(a: int, b: int) -> void:
+	if not atWar(a, b): return
+	if lordOf(a) != null or lordOf(b) != null: return
+	setRel(a, b, "peace")
+	G.dip.truce[a][b] = G.turn + DIP.truceTurns; G.dip.truce[b][a] = G.turn + DIP.truceTurns
+	addFatigue(a, -20); addFatigue(b, -20)
+	G.dip.favor[a][b] = max(G.dip.favor[a][b], 12)
+	G.dip.favor[b][a] = max(G.dip.favor[b][a], 12)
+	var msg = "%s と %s が和平を結ぶ" % [NAT(a).name, NAT(b).name]
+	logMsg(msg, "good")
+	chron(msg, a, "dip")
+	dipReport("peace", a, b, true, "")
+	for pr in [[a, b], [b, a]]:
+		for v in vassalsOf(pr[0]):
+			if atWar(v, pr[1]):
+				setRel(v, pr[1], "peace")
+				G.dip.truce[v][pr[1]] = G.turn + DIP.truceTurns; G.dip.truce[pr[1]][v] = G.turn + DIP.truceTurns
+				G.dip.favor[v][pr[1]] = max(G.dip.favor[v][pr[1]], 10)
+func makeAlly(a: int, b: int, forced := false) -> void:
+	setRel(a, b, "ally")
+	G.dip.pass[a][b] = true; G.dip.pass[b][a] = true
+	var u: int = 0 if forced else G.turn + DIP.allyTurns
+	G.dip.allyUntil[a][b] = u; G.dip.allyUntil[b][a] = u
+	var msg = "%s と %s が同盟を結ぶ" % [NAT(a).name, NAT(b).name]
+	logMsg(msg, "good")
+	chron(msg, a, "dip")
+	if not forced:
+		dipReport("ally", a, b, true, "期限 %dターン" % DIP.allyTurns)
+		shareWars(a, b)
+func renewAlly(a: int, b: int) -> bool:
+	if not isAlly(a, b): return false
+	G.dip.allyUntil[a][b] = G.turn + DIP.allyTurns; G.dip.allyUntil[b][a] = G.turn + DIP.allyTurns
+	var msg = "%s と %s が同盟を更新" % [NAT(a).name, NAT(b).name]
+	logMsg(msg, "good")
+	chron(msg, a, "dip")
+	dipReport("renew", a, b, true, "期限 %dターン" % DIP.allyTurns)
+	return true
+func expireAlly(a: int, b: int) -> void:
+	if not isAlly(a, b): return
+	setRel(a, b, "peace")
+	G.dip.pass[a][b] = false; G.dip.pass[b][a] = false
+	var msg = "%s と %s の同盟が期限切れ" % [NAT(a).name, NAT(b).name]
+	logMsg(msg)
+	chron(msg, a, "dip")
+	dipReport("allyEnd", a, b, true, "")
+func shareWars(a: int, b: int) -> void:
+	for pr in [[a, b], [b, a]]:
+		var x: int = pr[0]
+		var y: int = pr[1]
+		for o in G.nations:
+			if not o.alive or o.id == x or o.id == y: continue
+			if not atWar(x, o.id) or atWar(y, o.id): continue
+			if isAlly(y, o.id): breakAlly(y, o.id)
+			if isVassal(y, o.id) or isVassal(o.id, y): continue
+			if not (isVassal(y, x) or isVassal(x, y)) and not natNear(y, o.id): continue
+			enterWar(y, o.id, "%s との同盟により参戦" % NAT(x).name, warOf(x, o.id))
+func enterWar(a: int, b: int, why: String, wid: int) -> void:
+	if a == b or atWar(a, b) or not NAT(a).alive or not NAT(b).alive: return
+	setRel(a, b, "war")
+	if wid and G.wars.has(wid): joinSide(wid, a, b)
+	else: newWar(a, b)
+	warInit(a, b, "cede")
+	G.dip.goal[b][a] = "cede"
+	G.dip.pass[a][b] = false; G.dip.pass[b][a] = false
+	addFavor(b, a, -45)
+	var msg = "%s が %s との戦争に加わる" % [NAT(a).name, NAT(b).name]
+	logMsg(msg, "war")
+	chron(msg, a, "dip")
+	dipReport("join", a, b, true, why)
+func _joinCamp(x: int, y: int, attacker: bool) -> void:
+	for id in campOf(x):
+		if id == x or id == y: continue
+		if not NAT(id).alive or atWar(id, y): continue
+		if isAlly(id, y) or isVassal(id, y) or isVassal(y, id): continue
+		var bound = isVassal(id, x) or isVassal(x, id)
+		if not bound and pactLeft(id, y) > 0: continue
+		if not bound and not natNear(id, y): continue
+		if not bound and attacker and favorOf(id, x) < 45:
+			breakAlly(id, x)
+			dipReport("join", id, y, false, "%s の戦に加わらず、同盟を解消した" % NAT(x).name)
+			continue
+		var why: String
+		if isVassal(id, x): why = "%s の属国として参戦" % NAT(x).name
+		elif isVassal(x, id): why = "属国 %s を支援" % NAT(x).name
+		elif attacker: why = "%s との同盟により参戦" % NAT(x).name
+		else: why = "%s を守るため参戦" % NAT(x).name
+		enterWar(id, y, why, warOf(x, y))
+func joinWarByPact(a: int, b: int) -> void:
+	_joinCamp(a, b, true)
+	_joinCamp(b, a, false)
+func breakAlly(a: int, b: int) -> void:
+	if not isAlly(a, b): return
+	if isVassal(a, b) or isVassal(b, a): return
+	G.dip.allyUntil[a][b] = 0; G.dip.allyUntil[b][a] = 0
+	setRel(a, b, "peace")
+	G.dip.pass[a][b] = false; G.dip.pass[b][a] = false
+	addFavor(b, a, -30)
+	var msg = "%s が %s との同盟を破棄" % [NAT(a).name, NAT(b).name]
+	logMsg(msg, "war")
+	chron(msg, a, "dip")
+	dipReport("unally", a, b, true, "")
+func grantPass(owner: int, to: int) -> void:
+	G.dip.pass[owner][to] = true
+	var msg = "%s が %s に領内通行を許可" % [NAT(owner).name, NAT(to).name]
+	logMsg(msg, "good")
+	chron(msg, owner, "dip")
+	dipReport("pass", to, owner, true, "")
+func startWarPrep(a: int, b: int, _byPlayer := false) -> bool:
+	if not canPrepare(a, b): return false
+	G.dip.state[a][b] = "tense"; G.dip.state[b][a] = "tense"
+	G.dip.prepAt[a][b] = G.turn; G.dip.prepAt[b][a] = G.turn
+	G.dip.prepBy[a][b] = a; G.dip.prepBy[b][a] = a
+	G.dip.pass[a][b] = false; G.dip.pass[b][a] = false
+	if isTrade(a, b):
+		endTrade(a, b, "開戦準備")
+		addFavor(b, a, -10)
+	var just = warJust(a, b)
+	addFavor(b, a, DIP.prepFavor)
+	for c in G.nations:
+		if c.id == a or c.id == b or not c.alive: continue
+		addFavor(c.id, a, DIP.prepOthers * just)
+	addThreat(a, DIP.threatPrep * (DIP.calmThreatMul if inCalm() else 1.0) * just)
+	var msg = "%s が %s に対し軍備を進めています" % [NAT(a).name, NAT(b).name]
+	logMsg(msg, "war")
+	chron(msg, a, "dip")
+	dipReport("prep", a, b, true, ("大義：" + cbOf(a, b)) if hasCB(a, b) else "大義なし — 宣戦すれば国内の治安と諸国の評判が大きく下がる")
+	return true
+func cancelWarPrep(a: int, b: int, quiet := false) -> void:
+	if not isTense(a, b): return
+	G.dip.state[a][b] = "peace"; G.dip.state[b][a] = "peace"
+	G.dip.prepBy[a][b] = -1; G.dip.prepBy[b][a] = -1
+	if quiet: return
+	var msg = "%s と %s の緊張が解ける" % [NAT(a).name, NAT(b).name]
+	logMsg(msg, "good")
+	chron(msg, a, "dip")
+func dipTurn() -> void:
+	var n: int = G.nations.size()
+	for a in n:
+		for b in range(a + 1, n):
+			if not isAlly(a, b) or isVassal(a, b) or isVassal(b, a): continue
+			if allyUntil(a, b) and G.turn >= allyUntil(a, b):
+				var keep = favorOf(a, b) >= DIP.allyRenewMin and favorOf(b, a) >= DIP.allyRenewMin and natNear(a, b)
+				if keep: renewAlly(a, b)
+				else: expireAlly(a, b)
+	vassalTurn()
+	fabTurn()
+	peaceTiesTurn()
+	if G.turn == DIP.calmTurns:
+		var msg = "平穏の時代が終わる — 諸国が牙を研ぎ始める"
+		logMsg(msg, "war")
+		chron(msg, -1, "end")
+	for a in n:
+		for b in range(a + 1, n):
+			if G.dip.state[a][b] != "tense": continue
+			var by: int = G.dip.prepBy[a][b]
+			if by < 0:
+				cancelWarPrep(a, b, true)
+				continue
+			var over: int = G.turn - (G.dip.prepAt[a][b] + DIP.prepTurns)
+			if over > DIP.prepExpire:
+				cancelWarPrep(by, b if by == a else a)
+				G.dip.cool[a][b] = G.turn + 5; G.dip.cool[b][a] = G.turn + 5
+
+# ============================================================
+#   外交の知らせ
+# ============================================================
+var DIPQ = []
+const DIP_KIND := {
+	"prep": {"n": "開戦準備", "v": "軍備を進めた", "col": "#d8a03c"},
+	"war": {"n": "宣戦布告", "v": "宣戦を布告した", "col": "#c94b44"},
+	"peace": {"n": "和平", "v": "和平を申し入れた", "col": "#5f9c57"},
+	"ally": {"n": "同盟", "v": "同盟を申し入れた", "col": "#5f9c57"},
+	"unally": {"n": "同盟破棄", "v": "同盟の破棄を通告した", "col": "#c94b44"},
+	"pass": {"n": "通行許可", "v": "領内の通行を求めた", "col": "#7fa8cf"},
+	"join": {"n": "参戦", "v": "同盟にもとづき参戦した", "col": "#c94b44"},
+	"renew": {"n": "同盟の更新", "v": "同盟の更新に合意した", "col": "#5f9c57"},
+	"allyEnd": {"n": "同盟の満了", "v": "との同盟が期限を迎えた", "col": "#9b9484"},
+	"vassal": {"n": "従属", "v": "従属を求めた", "col": "#c9a227"},
+	"revolt": {"n": "独立戦争", "v": "に反旗を翻した", "col": "#c94b44"},
+	"surrender": {"n": "降伏", "v": "に降伏した", "col": "#c94b44"},
+	"faction": {"n": "陣営", "v": "が陣営への参加を呼びかけた", "col": "#9b7fd0"},
+	"unfaction": {"n": "陣営の離脱", "v": "の陣営を離れた", "col": "#9b9484"},
+	"annex": {"n": "併合", "v": "併合を求めた", "col": "#c94b44"},
+	"trade": {"n": "通商協定", "v": "通商を申し入れた", "col": "#c9a227"},
+	"untrade": {"n": "通商の途絶", "v": "との通商が途絶えた", "col": "#9b9484"},
+	"pact": {"n": "不可侵条約", "v": "不可侵条約を申し入れた", "col": "#7fa8cf"},
+	"unpact": {"n": "条約破棄", "v": "との不可侵条約を破棄した", "col": "#c94b44"},
+	"pactEnd": {"n": "条約の満了", "v": "との不可侵条約が期限を迎えた", "col": "#9b9484"},
+	"fab": {"n": "領有権の主張", "v": "への領有権を主張した", "col": "#d8a03c"},
+	"dispute": {"n": "国境紛争", "v": "との国境で衝突した", "col": "#d8a03c"},
+}
+signal dip_show(ev: Dictionary)
+signal dip_closed
+func dipReport(kind: String, from: int, to: int, ok := true, note := "") -> void:
+	if G == null or not CFG.showDip: return
+	DIPQ.append({"kind": kind, "from": from, "to": to, "ok": ok, "note": note, "turn": G.turn})
+	if DIPQ.size() > 12: DIPQ.pop_front()
+## 溜まった外交の知らせを、選んだ国に関わるものだけ順に見せる（OK まで進行は止まる）
+func flushDip() -> void:
+	while DIPQ.size():
+		var ev = DIPQ.pop_front()
+		if not CFG.showDip: continue
+		if not concerns([ev.from, ev.to]): continue
+		if dip_show.get_connections().is_empty(): continue
+		if ev.from < 0 or ev.to < 0: continue
+		dip_show.emit(ev)
+		await dip_closed
+func dipResultText(ev: Dictionary) -> String:
+	if not ev.ok:
+		match ev.kind:
+			"ally": return "同盟は断られた"
+			"peace": return "和平は退けられ、戦いは続く"
+			"vassal": return "従属の要求は拒まれた"
+			"annex": return "併合の要求は拒まれた"
+			"pass": return "通行は認められなかった"
+			"trade": return "通商は断られた"
+			"pact": return "条約は断られた"
+		return "受け入れられなかった"
+	match ev.kind:
+		"join": return "同盟・従属の義務により戦列に加わった"
+		"renew": return "同盟はさらに %dターン続く" % DIP.allyTurns
+		"allyEnd": return "同盟は解け、ふたたび別々の道を行く"
+		"vassal": return "従属が成立した。強制同盟となり、毎ターン貢納が行われる"
+		"revolt": return "独立戦争が始まった（%dターンの高揚）" % DIP.revoltTurns
+		"annex": return "国は併合され、地図から消えた"
+		"prep": return "%dターン後には宣戦できる。周辺国にも伝わった" % DIP.prepTurns
+		"war": return "両国は戦争状態に入った"
+		"peace": return "和平が成立した（%dターンは再び戦えない）" % DIP.truceTurns
+		"ally": return "同盟が成立した。互いの領内を通行できる"
+		"unally": return "同盟は破棄された"
+		"pass": return "領内の通行が認められた"
+		"trade": return "通商協定が成立した。互いに毎ターン収入を得る"
+		"untrade": return "通商協定は打ち切られた"
+		"pact": return "不可侵条約が成立した（%dターン）" % PACT.turns
+		"unpact": return "条約は破られ、相手は大義を得た"
+		"pactEnd": return "条約は期限を迎えた"
+		"fab": return "攻め込む口実が整った"
+		"dispute": return "小競り合いが起き、両国は互いに大義を得た"
+	return ""
+
+# ============================================================
+#   属国（従属）
+# ============================================================
+func freeLeft(nid: int) -> int: return max(0, NAT(nid).get("freeUntil", 0) - G.turn)
+func canAskVassal(a: int, b: int) -> bool:
+	if a == b or not NAT(a).alive or not NAT(b).alive: return false
+	if lordOf(b) != null or lordOf(a) == b: return false
+	if vassalsOf(b).size(): return false
+	if freeLeft(b) > 0: return false
+	var pa = nationPower(a)
+	var pb: float = max(1.0, nationPower(b))
+	var need: float = DIP.vassalWarRatio if atWar(a, b) else DIP.vassalRatio
+	return pa / pb >= need
+func vassalAccept(a: int, b: int) -> bool:
+	var ratio = nationPower(a) / max(1.0, nationPower(b))
+	var war = atWar(a, b)
+	var fav = favorOf(b, a)
+	var nb2 = NAT(b)
+	var sc: float = (ratio - 1) * 45 + (nb2.get("fatigue", 0) * 0.6 if war else 0.0) + (fav - DIP.vassalFavor) * 0.4
+	if war: sc += 18
+	sc += cpuDanger(b) * 30
+	if not war and fav < DIP.vassalFavor: sc -= 40
+	var terr = 0
+	for t in G.terrs:
+		if t.owner == b: terr += 1
+	if terr <= 2: sc += 25
+	return sc >= 30
+func makeVassal(lord: int, sub: int, note := "") -> void:
+	var L = NAT(lord)
+	var S_ = NAT(sub)
+	if atWar(lord, sub) and warObj(lord, sub) != null:
+		capitulate(warObj(lord, sub), sub, "属国となる")
+		warSuccession()
+	S_.vassalAt = G.turn
+	if facOf(sub) != null: leaveFaction(sub, "quiet")
+	if atWar(lord, sub):
+		G.dip.truce[lord][sub] = G.turn + DIP.truceTurns; G.dip.truce[sub][lord] = G.turn + DIP.truceTurns
+		addFatigue(lord, -20); addFatigue(sub, -20)
+	S_.lord = lord; S_.unrest = 0; S_.revoltBuff = 0
+	setRel(lord, sub, "ally")
+	G.dip.pass[lord][sub] = true; G.dip.pass[sub][lord] = true
+	G.dip.allyUntil[lord][sub] = 0; G.dip.allyUntil[sub][lord] = 0
+	G.dip.favor[sub][lord] = max(G.dip.favor[sub][lord], 20)
+	var msg = "%s が %s の属国となる" % [S_.name, L.name]
+	logMsg(msg, "war")
+	chron(msg, lord, "gov")
+	dipReport("vassal", lord, sub, true, note)
+	shareWars(lord, sub)
+	invalidateSupply()
+func freeVassal(sub: int, why := "") -> void:
+	var S_ = NAT(sub)
+	if S_.lord == null: return
+	var lord: int = S_.lord
+	S_.lord = null; S_.unrest = 0
+	if NAT(lord).alive and isAlly(lord, sub):
+		G.dip.allyUntil[lord][sub] = G.turn + DIP.allyTurns; G.dip.allyUntil[sub][lord] = G.turn + DIP.allyTurns
+	var msg = "%s が独立を取り戻す%s" % [S_.name, ("（" + why + "）") if why != "" else ""]
+	logMsg(msg, "good")
+	chron(msg, sub, "gov")
+func startRevolt(sub: int) -> void:
+	var S_ = NAT(sub)
+	if S_.lord == null: return
+	var lord: int = S_.lord
+	S_.lord = null; S_.unrest = 0
+	S_.revoltBuff = DIP.revoltTurns
+	S_.freeUntil = G.turn + DIP.revoltFree
+	G.dip.allyUntil[lord][sub] = 0; G.dip.allyUntil[sub][lord] = 0
+	G.dip.truce[lord][sub] = 0; G.dip.truce[sub][lord] = 0
+	setRel(lord, sub, "war")
+	newWar(sub, lord)
+	G.dip.pass[lord][sub] = false; G.dip.pass[sub][lord] = false
+	addFavor(lord, sub, -100); addFavor(sub, lord, -100)
+	for c in G.nations:
+		if not c.alive or c.id == sub or c.id == lord: continue
+		addFavor(c.id, sub, 4)
+	var msg = "%s が %s に反旗を翻す — 独立戦争" % [S_.name, NAT(lord).name]
+	logMsg(msg, "war")
+	chron(msg, sub, "fall")
+	dipReport("revolt", sub, lord, true, "%dターンのあいだ 攻撃+%d%%・防御+%d%%・生産+%d%%／%dターンは再び属国にならない" % [DIP.revoltTurns, int(round(DIP.revoltAtk * 100)), int(round(DIP.revoltDef * 100)), int(round(DIP.revoltProd * 100)), DIP.revoltFree])
+	joinWarByPact(sub, lord)
+	invalidateSupply()
+
+# ==================== k3c_dip.gd ====================
+# 外交 続き（元 5098〜5621）：支援・併合・危うさ・欲求・陣営
+
+# ---------- 属国・同盟国への支援 ----------
+func aidLeft(a: int, b: int) -> int: return max(0, G.dip.aid[a][b] + DIP.aidCool - G.turn)
+func canAid(a: int, b: int) -> bool:
+	if a == b or b < 0 or not NAT(b).alive: return false
+	if not isVassal(b, a) and not isAlly(a, b): return false
+	return aidLeft(a, b) <= 0
+func sendAid(a: int, b: int, kind: String) -> bool:
+	var A = NAT(a)
+	var B = NAT(b)
+	if not canAid(a, b): return false
+	var fav = 0
+	var un = 0
+	var what = ""
+	if kind == "gold":
+		if A.gold < DIP.aidGold: return false
+		A.gold -= DIP.aidGold; B.gold += DIP.aidGold
+		fav = DIP.aidGoldFav; un = DIP.aidGoldUnrest; what = "資金 %s G" % fmt(DIP.aidGold)
+	elif kind == "food":
+		if A.food < DIP.aidFood + 500: return false
+		A.food -= DIP.aidFood; B.food = min(foodCap(b), B.food + DIP.aidFood)
+		fav = DIP.aidFoodFav; un = DIP.aidFoodUnrest; what = "兵糧 %s" % fmt(DIP.aidFood)
+	else:
+		if total(A.stock) < DIP.aidTroop: return false
+		var left: int = DIP.aidTroop
+		var st = float(max(1, total(A.stock)))
+		for k in TK:
+			var n: int = min(A.stock[k], int(ceil(DIP.aidTroop * (A.stock[k] / st))), left)
+			A.stock[k] -= n; B.stock[k] += n; left -= n
+		fav = DIP.aidTroopFav; un = DIP.aidTroopUnrest; what = "兵 %s" % fmt(DIP.aidTroop - left)
+	G.dip.aid[a][b] = G.turn
+	addFavor(b, a, fav)
+	if isVassal(b, a): B.unrest = clamp_f(B.get("unrest", 0) + un, 0, DIP.unrestMax)
+	var msg = "%s が %s へ %s を援助（好感度 +%d%s）" % [A.name, B.name, what, fav, ("／不満 %d" % un) if isVassal(b, a) else ""]
+	logMsg(msg)
+	chron(msg, a, "gov")
+	return true
+func cpuAid(nid: int) -> void:
+	var na = NAT(nid)
+	for v in vassalsOf(nid):
+		var B = NAT(v)
+		if not canAid(nid, v): continue
+		if B.get("unrest", 0) < 45 and favorOf(v, nid) > 40: continue
+		if na.gold > DIP.aidGold * 3:
+			sendAid(nid, v, "gold"); return
+		if na.food > DIP.aidFood * 4:
+			sendAid(nid, v, "food"); return
+		if total(na.stock) > DIP.aidTroop * 2:
+			sendAid(nid, v, "troop"); return
+
+# ---------- 併合 ----------
+func inWar(nid: int) -> bool:
+	for o in G.nations:
+		if o.alive and o.id != nid and atWar(nid, o.id): return true
+	return false
+func canAnnex(a: int, b: int) -> bool:
+	if a == b or a < 0 or b < 0 or not NAT(a).alive or not NAT(b).alive: return false
+	if lordOf(a) != null: return false
+	if not nationsAdjacent(a, b): return false
+	if nationPower(a) / max(1.0, nationPower(b)) < DIP.annexRatio: return false
+	if not isVassal(b, a) or NAT(b).get("absorbBy") != null: return false
+	if G.turn - NAT(b).get("vassalAt", 0) < DIP.annexHold: return false
+	if NAT(b).get("unrest", 0) > DIP.annexUnrest: return false
+	if inWar(a) or inWar(b): return false
+	return true
+func annexAccept(a: int, b: int) -> bool:
+	var nb = NAT(b)
+	var ratio = nationPower(a) / max(1.0, nationPower(b))
+	var terr = 0
+	for t in G.terrs:
+		if t.owner == b: terr += 1
+	var will: float = (ratio - DIP.annexRatio) * 10 + 12
+	if isVassal(b, a): will += (DIP.unrestMax - nb.get("unrest", 0)) * 0.45 + favorOf(b, a) * 0.2
+	if atWar(a, b): will += warEdge(a, b) * 0.18 + nb.get("fatigue", 0) * 0.35
+	will += cpuDanger(b) * 14 - terr * 2.5
+	if terr <= 3: will += 20
+	return will >= 30
+func annex(a: int, b: int, note := "") -> void:
+	var A = NAT(a)
+	var B = NAT(b)
+	var terrs = []
+	for t in G.terrs:
+		if t.owner == b: terrs.append(t)
+	for t in terrs:
+		t.owner = a
+		t.chaos = max(t.chaos, CFG.chaosTurns)
+		t.sec = min(t.sec, CFG.secCapture + 15)
+		if t.cap: t.cap = false
+		invalidateTerr(t.id)
+	G.ownRev = G.get("ownRev", 0) + 1
+	var got = 0
+	for x in B.armies:
+		if x == null: continue
+		for k in TK:
+			var n = int(round(x.t[k] * DIP.annexTroop))
+			A.stock[k] += n; got += n; x.t[k] = 0
+	for k in TK:
+		var n = int(round(B.stock[k] * DIP.annexTroop))
+		A.stock[k] += n; got += n; B.stock[k] = 0
+	for i in B.armies.size(): B.armies[i] = null; ARMY_REV += 1
+	var gens = []
+	for g in B.gens:
+		if g != null and gens.size() < DIP.annexGens: gens.append(g)
+	for g in gens:
+		g.army = null
+		if A.gens.size() < GEN_MAX: A.gens.append(g)
+	B.gens = []
+	A.gold += int(round(B.gold * DIP.annexGold)); B.gold = 0
+	A.food += int(round(max(0, B.food) * DIP.annexGold)); B.food = 0
+	for v in G.nations:
+		if v.alive and v.lord == b: freeVassal(v.id, "主君の併合")
+	var wasV = isVassal(b, a)
+	B.lord = null; B.unrest = 0
+	setRel(a, b, "peace")
+	addThreat(a, DIP.annexThreat * 0.5 if wasV else DIP.annexThreat)
+	for c in G.nations:
+		if not c.alive or c.id == a or c.id == b: continue
+		addFavor(c.id, a, DIP.annexOthers)
+	var msg = "%s が %s を併合した（%d領地・兵 %s）" % [A.name, B.name, terrs.size(), fmt(got)]
+	logMsg(msg, "war")
+	chron(msg, a, "end")
+	dipReport("annex", a, b, true, note if note != "" else "%d領地と将軍%d名を継承" % [terrs.size(), gens.size()])
+	invalidateSupply()
+	checkNations()
+func cpuAnnex(nid: int) -> bool:
+	if randf() > DIP.cpuAnnexChance: return false
+	for o in G.nations:
+		if o.id == nid or not o.alive: continue
+		if not canAnnex(nid, o.id): continue
+		if annexAccept(nid, o.id):
+			startAbsorb(nid, o.id)
+			return true
+		dipReport("annex", nid, o.id, false, "国力比 %.2f 倍では呑ませられなかった" % (nationPower(nid) / max(1.0, nationPower(o.id))))
+		if isVassal(o.id, nid): NAT(o.id).unrest = clamp_f(NAT(o.id).get("unrest", 0) + 25, 0, DIP.unrestMax)
+		else: addFavor(o.id, nid, -12)
+		return true
+	return false
+func startAbsorb(a: int, b: int) -> void:
+	NAT(b).absorbBy = a
+	var msg = "%s が属国 %s の併合を始める（毎ターン少しずつ組み込む）" % [NAT(a).name, NAT(b).name]
+	logMsg(msg, "war")
+	chron(msg, a, "gov")
+	dipReport("annex", a, b, true, "毎ターン %d 領地ずつ" % DIP.absorbRate)
+func absorbTurn() -> void:
+	for na in G.nations:
+		if not na.alive or na.get("absorbBy") == null: continue
+		var a: int = na.absorbBy
+		if lordOf(na.id) != a or not NAT(a).alive:
+			na.absorbBy = null
+			continue
+		var own = []
+		for t in G.terrs:
+			if t.owner == na.id: own.append(t)
+		if own.size() <= DIP.absorbRate:
+			na.absorbBy = null
+			annex(a, na.id, "属国の併合")
+			continue
+		var cand = []
+		for t in own:
+			if not t.cap: cand.append(t)
+		cand.sort_custom(func(x, y): return contig(x, a) > contig(y, a))
+		var pk = cand.slice(0, DIP.absorbRate)
+		var names = []
+		for t in pk:
+			t.owner = a
+			t.chaos = max(t.chaos, 1)
+			t.sec = min(t.sec, CFG.secCapture + 20)
+			invalidateTerr(t.id)
+			names.append(t.name)
+			for x in na.armies:
+				if x != null and x.at == t.id: x.path = []
+		G.ownRev = G.get("ownRev", 0) + 1
+		if concerns([a, na.id]): logMsg("%s が %s に組み込まれた（%s 残り %d 領地）" % ["・".join(names), NAT(a).name, na.name, own.size() - pk.size()])
+func vassalTurn() -> void:
+	absorbTurn()
+	rebelTurn()
+	warTurn()
+	for na in G.nations:
+		if not na.alive: continue
+		if na.get("revoltBuff", 0) > 0: na.revoltBuff -= 1
+		var lord = lordOf(na.id)
+		if na.lord != null and lord == null:
+			freeVassal(na.id, "主君の滅亡")
+			continue
+		if lord == null:
+			na.unrest = max(0, na.get("unrest", 0) - 3)
+			continue
+		var pw = nationPower(na.id) / max(1.0, nationPower(lord))
+		var war = inWar(na.id)
+		var up: float = DIP.unrestBase + clamp_f(pw, 0, 2) * DIP.unrestPower + (DIP.unrestWar if war else 0.0)
+		if na.get("fatigue", 0) >= CFG.fatMid: up += 1.5
+		if hasDesire(na.id, "indep"): up += 2.5
+		na.unrest = clamp_f(na.get("unrest", 0) + up, 0, DIP.unrestMax)
+
+# ---------- 生き残りの見立て（0＝安全 / 1以上＝危機） ----------
+var DG_CACHE = {}
+var DG_KEY = ""
+func cpuDanger(nid: int) -> float:
+	var k = powKey()
+	if DG_KEY != k:
+		DG_CACHE = {}
+		DG_KEY = k
+	if DG_CACHE.has(nid): return DG_CACHE[nid]
+	var na = NAT(nid)
+	if not na.alive:
+		DG_CACHE[nid] = 0.0
+		return 0.0
+	var mine: float = max(1.0, nationPower(nid))
+	var foe = 0.0
+	var nearFoe = 0.0
+	var wars = 0
+	for o in G.nations:
+		if not o.alive or o.id == nid: continue
+		var adj = nationsAdjacent(nid, o.id)
+		if atWar(nid, o.id):
+			wars += 1
+			foe += nationPower(o.id) * (1.0 if adj else 0.4)
+		elif adj and (isTense(nid, o.id) or isTopThreat(o.id)):
+			nearFoe += nationPower(o.id) * 0.5
+	var own = 0
+	for t in G.terrs:
+		if t.owner == nid: own += 1
+	var d: float = min(1.9, (foe + nearFoe) / mine * 0.5)
+	d += max(0, wars - 1) * 0.18
+	d += na.get("fatigue", 0) / 180.0
+	if na.food <= 0: d += 0.25
+	if own <= 3: d += 0.35
+	var supply: int = na.supSet.size() if na.get("supSet") is Dictionary else own
+	if supply < own * 0.7: d += 0.15
+	if lordOf(nid) != null: d -= 0.2
+	var v = clamp_f(d, 0, 3)
+	DG_CACHE[nid] = v
+	return v
+func dangerLabel(d: float) -> String: return "安泰" if d < 0.5 else ("警戒" if d < 0.9 else ("危険" if d < 1.4 else "存亡の危機"))
+func dangerColor(d: float) -> String: return "#6d9c63" if d < 0.5 else ("#d29b3c" if d < 0.9 else "#c0504a")
+
+# ============================================================
+#   国ごとの欲求
+# ============================================================
+const DESIRE := {
+	"port": {"n": "港が欲しい", "war": true, "d": "海への出口や渡し口となる港町を手に入れたい"},
+	"land": {"n": "領土が欲しい", "war": true, "d": "豊かな隣の土地を手に入れたい"},
+	"reclaim": {"n": "旧領奪還", "war": true, "d": "奪われた土地を取り戻したい"},
+	"feud": {"n": "因縁に決着", "war": true, "d": "幾度も争った宿敵を屈服させたい"},
+	"indep": {"n": "独立したい", "war": false, "d": "主君のくびきから逃れたい"},
+	"protect": {"n": "属国を守りたい", "war": false, "d": "属国を狙う国から守りたい"},
+	"prosper": {"n": "国を豊かに", "war": false, "d": "しばらく戦を避け、開発と整備に力を入れたい"},
+	"guard": {"n": "守りを固めたい", "war": false, "d": "迫る脅威に備えて国境を固めたい"},
+}
+var DES = {"max": 2, "review": 6, "life": 40, "warBonus": 45, "warChanceMul": 1.0, "noWishMul": 0.2}
+func desiresOf(nid) -> Array:
+	if nid == null or nid < 0: return []
+	return NAT(nid).get("desires", [])
+func hasDesire(nid: int, k: String) -> bool:
+	for d in desiresOf(nid):
+		if d.k == k: return true
+	return false
+func desireNat(d: Dictionary) -> int:
+	if d.get("t") != null: return T(d.t).owner
+	if d.get("o") != null: return d.o
+	return -1
+func desireVs(nid: int, o: int):
+	var best = null
+	for d in desiresOf(nid):
+		if DESIRE[d.k].war or d.k == "protect" or d.k == "guard":
+			if desireNat(d) == o and (best == null or d.w > best.w): best = d
+	return best
+func desireText(d: Dictionary) -> String:
+	var t = T(d.t) if d.get("t") != null else null
+	var o = NAT(d.o) if d.get("o") != null else null
+	match d.k:
+		"port": return "%s の港が欲しい" % t.name
+		"land": return "%s の土地が欲しい" % t.name
+		"reclaim": return "旧領 %s を取り戻したい" % t.name
+		"feud": return "宿敵 %s と決着をつけたい" % o.name
+		"indep": return "%s から独立したい" % o.name
+		"protect": return "属国 %s を %s から守りたい" % [NAT(d.v).name, o.name]
+		"prosper": return "国を豊かにしたい"
+		"guard": return "%s に備えて守りを固めたい" % o.name
+	return DESIRE[d.k].n
+var COAST_G = null
+var COAST = {}
+var SEA_END = {}
+func coastInfo() -> void:
+	if COAST_G == G: return
+	segNbrs()
+	COAST = {}
+	SEA_END = {}
+	for t in G.terrs:
+		for j in t.segN:
+			if j < 0:
+				COAST[t.id] = true
+				break
+	for e in G.edges:
+		if e.get("sea", false):
+			SEA_END[e.a] = true
+			SEA_END[e.b] = true
+	COAST_G = G
+func portValue(t: Dictionary) -> float:
+	coastInfo()
+	if not COAST.has(t.id): return 0.0
+	return 10 + (25 if SEA_END.has(t.id) else 0) + (15 if t.get("trait") == "trade" else 0) + (8 if t.type == "city" and t.dev >= 3 else 0)
+func landValue(t: Dictionary) -> float:
+	return t.pop / 1000.0 + t.dev * 4 + (12 if ["fertile", "iron", "horse", "trade", "dense"].has(t.get("trait")) else 0) + (15 if t.cap else 0)
+func borderTargets(nid: int) -> Array:
+	var out = {}
+	for t in G.terrs:
+		if t.owner != nid: continue
+		for n in roadNbrs(t.id):
+			var o: int = T(n.to).owner
+			if o >= 0 and o != nid: out[n.to] = true
+	return out.keys()
+func _okTarget(nid: int, o: int, lord) -> bool:
+	return o >= 0 and o != nid and NAT(o).alive and lordOf(o) != nid and o != lord and not isAlly(nid, o) and not sameFaction(nid, o)
+func desireCands(nid: int) -> Array:
+	var na = NAT(nid)
+	var c = []
+	var mine: float = max(1.0, nationPower(nid))
+	var P: String = na.persona
+	var lord = lordOf(nid)
+	if lord != null:
+		var pw = mine / max(1.0, nationPower(lord))
+		c.append({"k": "indep", "o": lord, "w": 30 + na.get("unrest", 0) * 0.4 + clamp_f(pw, 0, 1.5) * 25 + (10 if P == "aggr" else 0)})
+	for v in vassalsOf(nid):
+		for o in G.nations:
+			if not o.alive or o.id == nid or o.id == v or lordOf(o.id) == nid: continue
+			var hostile: bool = atWar(o.id, v) or (isTense(o.id, v) and prepBy(o.id, v) == o.id) or desireVs(o.id, v) != null
+			if hostile: c.append({"k": "protect", "o": o.id, "v": v, "w": 55})
+	if lord == null:
+		for t in G.terrs:
+			if t.get("former") != nid or t.owner == nid or not _okTarget(nid, t.owner, lord): continue
+			if G.turn - t.get("formerAt", 0) > 60: continue
+			c.append({"k": "reclaim", "t": t.id, "w": 35 + landValue(t) * 0.8 + (30 if t.get("wasCap") == nid else 0) - (G.turn - t.get("formerAt", 0)) * 0.3})
+		var bt = borderTargets(nid)
+		coastInfo()
+		var ports = 0
+		for t in G.terrs:
+			if t.owner == nid and portValue(t) >= 10: ports += 1
+		var warlike: float = 8 if P == "aggr" else (0 if P == "bal" else -15)
+		for id in bt:
+			var t = T(id)
+			var o: int = t.owner
+			if not _okTarget(nid, o, lord): continue
+			var ratio = mine / max(1.0, nationPower(o))
+			if ratio < 0.85 or not (atWar(nid, o) or canPrepare(nid, o) or isTense(nid, o)): continue
+			var pv = portValue(t)
+			if pv > 0: c.append({"k": "port", "t": id, "w": pv + (30 if ports == 0 else (8 if ports < 2 else -10)) + clamp_f(ratio - 1, -1, 1) * 15 + warlike * 0.5})
+			c.append({"k": "land", "t": id, "w": landValue(t) + warlike + clamp_f(ratio - 1, -1, 1) * 18})
+		for o in G.nations:
+			if not _okTarget(nid, o.id, lord) or not natNear(nid, o.id): continue
+			var f: int = G.dip.feud[nid][o.id]
+			if f >= 2: c.append({"k": "feud", "o": o.id, "w": 25 + f * 12 + (60 - favorOf(nid, o.id)) * 0.2})
+	var fat: float = na.get("fatigue", 0)
+	c.append({"k": "prosper", "w": 18 + fat * 0.5 + (18 if P == "econ" else (6 if P == "def" else (-12 if P == "aggr" else 0))) + (10 if na.gold < 8000 else 0)})
+	var dg = cpuDanger(nid)
+	for o in G.nations:
+		if not o.alive or o.id == nid or not nationsAdjacent(nid, o.id) or isAlly(nid, o.id): continue
+		var r = nationPower(o.id) / mine
+		var aim = desireVs(o.id, nid)
+		if r >= 1.4 or aim != null or (isTense(o.id, nid) and prepBy(o.id, nid) == o.id):
+			c.append({"k": "guard", "o": o.id, "w": 20 + clamp_f(r - 1, 0, 2) * 15 + (18 if aim != null else 0) + dg * 20 + (12 if P == "def" else 0)})
+	return c
+func desireKey(d: Dictionary) -> String:
+	if d.get("t") != null: return d.k + ":t" + str(d.t)
+	if d.get("o") != null: return d.k + ":o" + str(d.o)
+	return d.k + ":"
+func desireDone(nid: int, d: Dictionary) -> bool:
+	match d.k:
+		"port", "land", "reclaim": return T(d.t).owner == nid
+		"feud": return not NAT(d.o).alive or lordOf(d.o) == nid
+		"indep": return lordOf(nid) == null
+		"protect": return not NAT(d.v).alive or lordOf(d.v) != nid or (not atWar(d.o, d.v) and not isTense(d.o, d.v) and G.turn - d.at >= 8)
+		"prosper": return G.turn - d.at >= 25
+		"guard": return not NAT(d.o).alive or G.turn - d.at >= 25
+	return false
+func desireDoneText(d: Dictionary) -> String:
+	var t = T(d.t) if d.get("t") != null else null
+	var o = NAT(d.o) if d.get("o") != null else null
+	match d.k:
+		"port": return "%s の港を手に入れた" % t.name
+		"land": return "%s を手に入れた" % t.name
+		"reclaim": return "旧領 %s を取り戻した" % t.name
+		"feud": return ("宿敵 %s を屈服させた" if o.alive else "宿敵 %s は滅んだ") % o.name
+		"indep": return "%s から独立した" % o.name
+		"protect": return ("属国 %s を守り抜いた" % NAT(d.v).name) if NAT(d.v).alive and lordOf(d.v) != null else ""
+	return ""
+func desireLost(nid: int, d: Dictionary) -> bool:
+	if G.turn >= d.until: return true
+	var o = desireNat(d)
+	if DESIRE[d.k].war and (o < 0 or o == nid or not NAT(o).alive): return d.k != "feud"
+	if DESIRE[d.k].war and o >= 0 and (isAlly(nid, o) or lordOf(o) == nid or lordOf(nid) == o): return true
+	return false
+func desireLog(nid: int, msg: String, others := [], cls := "") -> void:
+	chron(msg, nid, "gov")
+	if concerns([nid] + others): logMsg(msg, cls)
+func desireTurn(nid: int) -> void:
+	var na = NAT(nid)
+	if not na.alive: return
+	if not na.has("desires"): na.desires = []
+	for d in na.desires.duplicate():
+		if desireDone(nid, d):
+			na.desires.erase(d)
+			var txt = desireDoneText(d)
+			if txt != "": desireLog(nid, "%s、望みを果たす — %s" % [na.name, txt], [desireNat(d)], "good")
+		elif desireLost(nid, d):
+			na.desires.erase(d)
+			if concerns([nid]): logMsg("%s は「%s」を諦めた" % [na.name, desireText(d)])
+	var due: bool = (G.turn + nid) % DES.review == 0 or na.desires.is_empty()
+	if not due or na.desires.size() >= DES.max: return
+	var have = {}
+	for d in na.desires: have[desireKey(d)] = true
+	var peaceful = false
+	var warlike = false
+	for d in na.desires:
+		if d.k == "prosper": peaceful = true
+		if DESIRE[d.k].war: warlike = true
+	var pool = []
+	for x in desireCands(nid):
+		if have.has(desireKey(x)) or x.w < 30: continue
+		if peaceful and DESIRE[x.k].war: continue
+		if warlike and x.k == "prosper": continue
+		var dup = false
+		if x.get("t") != null:
+			for d in na.desires:
+				if d.get("t") != null and T(d.t).owner == T(x.t).owner and d.k == x.k: dup = true
+		if dup: continue
+		pool.append(x)
+	if pool.is_empty(): return
+	pool.sort_custom(func(a, b): return a.w > b.w)
+	var top3 = pool.slice(0, 3)
+	var pickD: Dictionary = top3[0] if randf() < 0.6 else top3[randi() % top3.size()]
+	var d = pickD.duplicate()
+	d.at = G.turn
+	d.until = G.turn + DES.life + ri(-8, 8)
+	na.desires.append(d)
+	if d.k == "feud" or d.k == "reclaim":
+		grantCB(nid, desireNat(d), ("%s との因縁" % NAT(d.o).name) if d.k == "feud" else ("%s の奪還" % T(d.t).name), DES.life)
+	if d.k == "protect": grantCB(nid, d.o, "属国 %s の防衛" % NAT(d.v).name, 30)
+	desireLog(nid, "%s の望み：%s" % [na.name, desireText(d)], [desireNat(d)])
+
+# ============================================================
+#   陣営
+# ============================================================
+var FAC = {"ratio": 1.5, "createChance": 0.08, "inviteChance": 0.3, "leaveFavor": -20, "inviteFavor": 50}
+func facOf(n):
+	if n == null or n < 0: return null
+	var na = NAT(n)
+	var f = na.get("faction")
+	if f == null or not G.has("factions"): return null
+	return G.factions.get(f)
+func sameFaction(a: int, b: int) -> bool:
+	if a == b: return false
+	var fa = facOf(a)
+	return fa != null and fa == facOf(b)
+func avgPower() -> float:
+	var s = 0.0
+	var n = 0
+	for x in G.nations:
+		if x.alive:
+			s += nationPower(x.id)
+			n += 1
+	return s / max(1, n)
+func canMakeFaction(n: int) -> bool:
+	var na = NAT(n)
+	return na.alive and facOf(n) == null and lordOf(n) == null and nationPower(n) >= avgPower() * FAC.ratio
+func makeFaction(n: int) -> void:
+	if not G.has("factions"): G.factions = {}
+	G.facSeq = G.get("facSeq", 0) + 1
+	var id: int = G.facSeq
+	var nm: String = NAT(n).name
+	if nm.ends_with("都") or nm.ends_with("道") or nm.ends_with("府") or nm.ends_with("県"): nm = nm.substr(0, nm.length() - 1)
+	nm += "陣営"
+	G.factions[id] = {"id": id, "name": nm, "leader": n, "members": [n], "t0": G.turn}
+	NAT(n).faction = id
+	var msg = "%s が「%s」を結成する" % [NAT(n).name, nm]
+	logMsg(msg, "good")
+	chron(msg, n, "dip")
+	dipReport("faction", n, n, true, "盟主として近くの国を招きます")
+func joinFaction(F: Dictionary, n: int) -> void:
+	if not F.members.has(n): F.members.append(n)
+	NAT(n).faction = F.id
+	for m in F.members:
+		if m != n:
+			addFavor(m, n, 10); addFavor(n, m, 10)
+	var msg = "%s が「%s」に加わる" % [NAT(n).name, F.name]
+	if concerns([n] + F.members): logMsg(msg, "good")
+	chron(msg, n, "dip")
+func leaveFaction(n: int, why := "") -> void:
+	var F = facOf(n)
+	if F == null: return
+	F.members.erase(n)
+	NAT(n).faction = null
+	if why != "quiet":
+		for m in F.members:
+			addFavor(m, n, FAC.leaveFavor); addFavor(n, m, FAC.leaveFavor)
+		var msg = "%s が「%s」を離脱する%s" % [NAT(n).name, F.name, ("（" + why + "）") if why != "" else ""]
+		if concerns([n] + F.members): logMsg(msg, "war")
+		chron(msg, n, "dip")
+		dipReport("unfaction", n, F.leader, true, why)
+	facCheck(F)
+func facCheck(F: Dictionary) -> void:
+	var mem = []
+	for m in F.members:
+		if NAT(m).alive and NAT(m).get("faction") == F.id: mem.append(m)
+	F.members = mem
+	if mem.is_empty():
+		G.factions.erase(F.id)
+		chron("「%s」が解散する" % F.name, F.leader, "dip")
+		return
+	if not mem.has(F.leader):
+		var s = mem.duplicate()
+		s.sort_custom(func(x, y): return nationPower(x) > nationPower(y))
+		F.leader = s[0]
+		chron("「%s」の盟主が %s に代わる" % [F.name, NAT(F.leader).name], F.leader, "dip")
+func _facWorth(nid: int, F: Dictionary, o: Dictionary, facPow: float, top0) -> float:
+	var w = favorOf(nid, o.id) + favorOf(o.id, nid) * 0.5
+	var front = false
+	for c in G.nations:
+		if not c.alive or not nationsAdjacent(o.id, c.id): continue
+		for m in F.members:
+			if atWar(m, c.id):
+				front = true
+				break
+		if front: break
+	if front: w += 20
+	if top0 != null and not F.members.has(top0.id) and nationsAdjacent(o.id, top0.id): w += 12
+	for c in G.nations:
+		if c.alive and isTense(o.id, c.id) and nationPower(c.id) > facPow * 0.6:
+			w -= 40
+			break
+	w += nationPower(o.id) / max(1.0, facPow) * 30
+	w -= max(0, F.members.size() - 3) * 12
+	return w
+func cpuFaction(nid: int) -> void:
+	var na = NAT(nid)
+	if not na.alive: return
+	if lordOf(nid) != null:
+		if facOf(nid) != null: leaveFaction(nid, "quiet")
+		return
+	var F = facOf(nid)
+	if F == null and canMakeFaction(nid) and randf() < FAC.createChance:
+		makeFaction(nid)
+		F = facOf(nid)
+	if F != null and F.leader == nid and randf() < FAC.inviteChance:
+		var cand = []
+		for o in G.nations:
+			if not o.alive or o.id == nid or facOf(o.id) != null or lordOf(o.id) != null: continue
+			var near = false
+			var war = false
+			for m in F.members:
+				if natNear(m, o.id): near = true
+				if atWar(m, o.id): war = true
+			if not near or war: continue
+			if favorOf(nid, o.id) < FAC.inviteFavor - 10: continue
+			cand.append(o)
+		var facPow = 0.0
+		for m in F.members: facPow += nationPower(m)
+		var top0 = topThreat()
+		var smart = smartAI(nid)
+		if smart:
+			var ws = {}
+			for o in cand: ws[o.id] = _facWorth(nid, F, o, facPow, top0)
+			cand.sort_custom(func(x, y): return ws[x.id] > ws[y.id])
+		else:
+			cand.sort_custom(func(x, y): return favorOf(x.id, nid) > favorOf(y.id, nid))
+		var o = null
+		if cand.size() and (not smart or _facWorth(nid, F, cand[0], facPow, top0) > 40): o = cand[0]
+		if o != null:
+			var common = false
+			for c in G.nations:
+				if not c.alive or not atWar(o.id, c.id): continue
+				for m in F.members:
+					if atWar(m, c.id): common = true
+			var top = topThreat()
+			var vsTop: bool = top != null and not F.members.has(top.id) and natHops(o.id, top.id) <= 2
+			var sc = (favorOf(o.id, nid) - 50) * 0.8 + cpuDanger(o.id) * 35 + (20 if common else 0) + (15 if vsTop else 0) \
+				- (10 if o.persona == "aggr" else 0) - (25 if nationPower(o.id) > nationPower(nid) * 0.8 else 0) + 10
+			for d in desiresOf(o.id):
+				if DESIRE[d.k].war and F.members.has(desireNat(d)):
+					sc -= 40
+					break
+			if sc >= 20:
+				joinFaction(F, o.id)
+				dipReport("faction", nid, o.id, true, "「%s」への招待に応じた" % F.name)
+			else:
+				dipReport("faction", nid, o.id, false, "「%s」への招待を断った" % F.name)
+				addFavor(nid, o.id, -2)
+	if F != null and F.leader != nid and G.factions.has(F.id):
+		var wantOut = favorOf(nid, F.leader) < 25
+		if not wantOut:
+			for d in desiresOf(nid):
+				if DESIRE[d.k].war and F.members.has(desireNat(d)): wantOut = true
+		if wantOut and randf() < 0.3:
+			leaveFaction(nid, "盟主との不和" if favorOf(nid, F.leader) < 25 else "加盟国の土地を望んで")
+	F = facOf(nid)
+	if F != null:
+		for m in F.members:
+			if m != nid and favorOf(nid, m) < 80: addFavor(nid, m, 0.8)
+func factionCallToArms(a: int, b: int) -> void:
+	var wid = warOf(a, b)
+	var Fb = facOf(b)
+	if Fb != null:
+		for m in Fb.members.duplicate():
+			if m == b or not NAT(m).alive or atWar(m, a) or sameFaction(m, a): continue
+			enterWar(m, a, "「%s」の加盟国 %s を守るため参戦" % [Fb.name, NAT(b).name], wid)
+	var Fa = facOf(a)
+	if Fa != null:
+		for m in Fa.members.duplicate():
+			if m == a or not NAT(m).alive or atWar(m, b) or sameFaction(m, b): continue
+			var ok: bool = favorOf(m, a) >= 50 and pactLeft(m, b) <= 0 and natNear(m, b) and not isAlly(m, b) and NAT(m).get("fatigue", 0) < DIP.fatiguePeace
+			if ok: enterWar(m, b, "「%s」の呼びかけに応じて参戦" % Fa.name, wid)
+			elif concerns([m, a]): dipReport("join", m, b, false, "「%s」の呼びかけに応じなかった" % Fa.name)
+
+# ==================== k4_strat.gd ====================
+# 滅びた国の蜂起・CPUの外交戦略（元 5622〜6006）
+
+var REB = {"base": 0.6, "lowSec": 1.4, "war": 0.7, "need": 100, "minDead": 20, "takeRate": 0.25, "takeMin": 2, "takeMax": 6}
+func rebelTurn() -> void:
+	for D in G.nations:
+		if D.alive: continue
+		var home = []
+		for t in G.terrs:
+			if t.get("home") == D.id and t.owner >= 0 and t.owner != D.id: home.append(t)
+		if home.size() < 2: continue
+		var low = 0
+		var war = 0
+		for t in home:
+			if t.sec < 50: low += 1
+			if inWar(t.owner): war += 1
+		D.rebel = clamp_f(D.get("rebel", 0) + REB.base + float(low) / home.size() * REB.lowSec + float(war) / home.size() * REB.war, 0, REB.need)
+		if D.rebel >= REB.need and G.turn - D.get("diedAt", 0) >= REB.minDead:
+			var sd = rebelSeed(home)
+			if sd == null: continue
+			var X: int = sd.owner
+			var near = {}
+			for t in home:
+				if t.owner == X: near[t.id] = true
+			var guard = 0
+			for a in NAT(X).armies:
+				if a == null: continue
+				var hit: bool = near.has(a.at)
+				if not hit:
+					for n in roadNbrs(a.at):
+						if near.has(n.to):
+							hit = true
+							break
+				if hit: guard += total(a.t)
+			var levy = 0.0
+			for t in home: levy += t.pop
+			levy *= REB.takeRate * 0.18
+			D.rebelWait = D.get("rebelWait", 0) + 1
+			if inWar(X) or guard < levy * 1.5 or D.rebelWait >= 15:
+				D.rebelWait = 0
+				reviveNation(D, home)
+func rebelSeed(home: Array):
+	for t in home:
+		if t.get("homeCap", false) and not t.cap: return t
+	var c = []
+	for t in home:
+		if not t.cap: c.append(t)
+	if c.is_empty(): return null
+	c.sort_custom(func(x, y): return x.dev > y.dev if x.dev != y.dev else x.pop > y.pop)
+	return c[0]
+func reviveNation(D: Dictionary, home: Array) -> void:
+	var seed = rebelSeed(home)
+	if seed == null: return
+	var X: int = seed.owner
+	var n = int(clamp_f(round(home.size() * REB.takeRate), REB.takeMin, REB.takeMax))
+	var take = [seed]
+	var seen = {seed.id: true}
+	var i = 0
+	while i < take.size() and take.size() < n:
+		for nb in roadNbrs(take[i].id):
+			var t = T(nb.to)
+			if take.size() >= n or seen.has(nb.to) or t.get("home") != D.id or t.owner != X or t.cap: continue
+			seen[nb.to] = true
+			take.append(t)
+		i += 1
+	for t in take:
+		t.owner = D.id
+		t.chaos = max(t.chaos, 2)
+		t.sec = max(t.sec, 55)
+		for na in G.nations:
+			for a in na.armies:
+				if a != null and a.at == t.id and a.owner == X: a.at = nearestOwnTerr(X, t.id); ARMY_REV += 1
+		invalidateTerr(t.id)
+	G.ownRev = G.get("ownRev", 0) + 1
+	for t in G.terrs:
+		if t.owner == D.id: t.cap = false
+	seed.cap = true
+	D.alive = true; D.capital = seed.id; D.lord = null; D.faction = null; D.unrest = 0; D.rebel = 0
+	D.fatigue = 0; D.desires = []; D.revoltBuff = DIP.revoltTurns; D.freeUntil = G.turn + DIP.revoltFree
+	D.gold = max(D.get("gold", 0), 8000); D.food = max(D.get("food", 0), 3000)
+	var arm = []
+	arm.resize(ARMY_MAX)
+	D.armies = arm; ARMY_REV += 1
+	D.gens = []
+	var pop = 0.0
+	for t in take: pop += t.pop
+	var levy = int(round(pop * 0.18))
+	var g = mkGen(G, D, randomPts())
+	var a0 = mkArmy(D.id, 0, seed.id)
+	a0.t.inf = int(round(levy * 0.6)); a0.t.spe = int(round(levy * 0.25)); a0.t.arc = levy - a0.t.inf - a0.t.spe
+	a0.target = a0.t.duplicate()
+	a0.gen = g.id
+	g.army = 0
+	D.armies[0] = a0; ARMY_REV += 1
+	for o in G.nations:
+		if o.id != D.id:
+			G.dip.state[D.id][o.id] = "peace"; G.dip.state[o.id][D.id] = "peace"
+			G.dip.favor[D.id][o.id] = 30; G.dip.favor[o.id][D.id] = 30
+			setWarId(D.id, o.id, 0)
+	setRel(D.id, X, "war")
+	newWar(D.id, X)
+	G.dip.pass[D.id][X] = false; G.dip.pass[X][D.id] = false
+	addFavor(D.id, X, -100); addFavor(X, D.id, -60)
+	var names = []
+	for t in take: names.append(t.name)
+	var msg = "%s、旧領 %s で蜂起し復活 — %s と独立戦争" % [D.name, "・".join(names), NAT(X).name]
+	logMsg(msg, "war")
+	chron(msg, D.id, "fall")
+	dipReport("revolt", D.id, X, true, "旧領の民が立ち上がった（%d領地・兵 %s）" % [take.size(), fmt(levy)])
+	nations_changed.emit()
+	invalidateSupply()
+signal nations_changed
+func nearestOwnTerr(n: int, from: int) -> int:
+	var b = bfsFrom(from)
+	var best = from
+	var bd = INF
+	for t in G.terrs:
+		if t.owner == n and bhas(b, t.id) and b.d[t.id] < bd:
+			bd = b.d[t.id]
+			best = t.id
+	return best
+
+# ---------- CPU の戦略：戦う前に「相手の陣営ごと」の力を見積もる ----------
+func smartAI(nid: int) -> bool: return not G.has("abTest") or G.abTest == null or G.abTest.get(nid, false)
+func busyFrac(o: int) -> float:
+	var foe = 0.0
+	for x in G.nations:
+		if x.alive and x.id != o and atWar(o, x.id) and nationsAdjacent(o, x.id): foe += nationPower(x.id)
+	return clamp_f(foe / max(1.0, nationPower(o) + foe), 0, 0.6) if foe else 0.0
+func defCoalition(a: int, b: int) -> float:
+	var p = nationPower(b) * (1 - busyFrac(b) * 0.6)
+	var seen = {a: true, b: true}
+	var Fb = facOf(b)
+	if Fb != null:
+		for m in Fb.members:
+			if not seen.has(m) and NAT(m).alive and not sameFaction(m, a):
+				seen[m] = true
+				p += nationPower(m) * (0.8 if natNear(m, a) else 0.35)
+	for id in campOf(b):
+		if seen.has(id) or not NAT(id).alive or atWar(id, a) or isAlly(id, a): continue
+		var bound = isVassal(id, b) or isVassal(b, id)
+		if not bound and (pactLeft(id, a) > 0 or not natNear(id, a)): continue
+		seen[id] = true
+		p += nationPower(id) * 0.8
+	return max(1.0, p)
+func atkCoalition(a: int, b: int) -> float:
+	var p = nationPower(a)
+	var seen = {a: true, b: true}
+	var Fa = facOf(a)
+	if Fa != null:
+		for m in Fa.members:
+			if not seen.has(m) and NAT(m).alive and favorOf(m, a) >= 50 and natNear(m, b) and pactLeft(m, b) <= 0 and not isAlly(m, b):
+				seen[m] = true
+				p += nationPower(m) * 0.5
+	for id in campOf(a):
+		if seen.has(id) or not NAT(id).alive or isAlly(id, b): continue
+		var bound = isVassal(id, a) or isVassal(a, id)
+		if not bound and (favorOf(id, a) < 45 or not natNear(id, b) or pactLeft(id, b) > 0): continue
+		seen[id] = true
+		p += nationPower(id) * (0.8 if bound else 0.5)
+	return p
+func cpuDiplomacy(nid: int) -> void:
+	var na = NAT(nid)
+	if not na.alive: return
+	_tp("desire")
+	desireTurn(nid)
+	_tp("faction")
+	cpuFaction(nid)
+	_tp("vassal")
+	var myLord = lordOf(nid)
+	if myLord != null:
+		cpuVassal(nid, myLord)
+		return
+	cpuAid(nid)
+	if cpuAnnex(nid): return
+	cpuVassalOffer(nid)
+	var P: Dictionary = PERSONA.get(na.persona, PERSONA.bal)
+	var top = topThreat()
+	var iAmTop: bool = top != null and top.id == nid
+	var myTgt = {}
+	for d in desiresOf(nid):
+		if DESIRE[d.k].war: myTgt[desireNat(d)] = true
+	var myWars = []
+	for c in G.nations:
+		if c.alive and atWar(nid, c.id): myWars.append(c.id)
+	_tp("drift")
+	# 好感度の自然変動
+	for o in G.nations:
+		if o.id == nid or not o.alive: continue
+		var st = relState(nid, o.id)
+		var dvs = desireVs(o.id, nid)
+		var aimsMe: bool = st != "war" and dvs != null and DESIRE[dvs.k].war
+		var sameTgt = false
+		if st != "war" and natNear(nid, o.id):
+			for d in desiresOf(o.id):
+				if DESIRE[d.k].war and myTgt.has(desireNat(d)):
+					sameTgt = true
+					break
+		var common = false
+		for c in myWars:
+			if c != o.id and atWar(o.id, c):
+				common = true
+				break
+		var d: float = DIP.driftWar if st == "war" else (DIP.driftAlly if st == "ally" else DIP.driftPeace)
+		var cap: float = DIP.driftCap
+		if st != "war" and common and natNear(nid, o.id):
+			d = DIP.driftCommon; cap = DIP.driftCommonCap
+		if top != null and top.id == o.id and st != "ally":
+			d = min(d, DIP.threatDrift * (1 + top.v / 120.0)); cap = -100
+		elif top != null and not iAmTop and top.id != o.id and st != "war" and natNear(nid, o.id) \
+				and natHops(nid, top.id) <= DIP.reach and natHops(o.id, top.id) <= DIP.reach:
+			d = max(d, DIP.driftCommon); cap = DIP.driftCommonCap
+		if sameTgt:
+			d = max(d, DIP.driftCommon); cap = max(cap, 80)
+		if aimsMe:
+			d = min(d, -0.5); cap = min(cap, 40)
+		var f = favorOf(nid, o.id)
+		if d > 0 and f >= cap: continue
+		if aimsMe and d < 0 and st != "war" and f <= 25: continue
+		addFavor(nid, o.id, d)
+	_tp("peace")
+	# 和平を考える
+	for o in G.nations:
+		if o.id == nid or not o.alive or not atWar(nid, o.id): continue
+		if not warLeaders(nid, o.id): continue
+		if G.turn - G.dip.peaceAt[nid][o.id] < DIP.peaceCool: continue
+		if warObj(nid, o.id) == null and lordOf(o.id) != null: continue
+		var turns: int = G.turn - G.dip.since[nid][o.id]
+		var mine = nationPower(nid)
+		var theirs = nationPower(o.id)
+		var minT: int = 3 if goalDone(nid, o.id) else (min(4, DIP.cpuPeaceTurns) if cpuDanger(nid) >= 1.1 else DIP.cpuPeaceTurns)
+		if turns < minT: continue
+		var fat: float = na.get("fatigue", 0)
+		var dg = cpuDanger(nid)
+		var Wp = warObj(nid, o.id)
+		var nearCap: bool = Wp != null and surrenderProg(Wp, nid) >= surrenderLimit(nid) * 0.7
+		var wantPeace: bool = goalDone(nid, o.id) or nearCap or mine < theirs * 0.8 or fat >= DIP.fatiguePeace or dg >= 0.9 \
+			or (dg >= 0.6 and not isTopThreat(o.id)) \
+			or randf() < 0.08 + fat / 400.0 + P.peaceW + ((G.turn - Wp.t0) / 80.0 if Wp != null else 0.0)
+		if not wantPeace: continue
+		var terms = cpuPeaceTerms(nid, o.id)
+		G.dip.peaceAt[nid][o.id] = G.turn; G.dip.peaceAt[o.id][nid] = G.turn
+		if peaceAccept(nid, o.id, terms) and favorOf(o.id, nid) >= -60:
+			var lines: Array = settlePeace(nid, o.id, terms)
+			dipReport("peace", nid, o.id, true, "／".join(lines) if lines.size() else "白紙和平")
+		else:
+			dipReport("peace", nid, o.id, false, "戦勝点差 %d ／ 戦って%dターン" % [warEdge(nid, o.id), turns])
+	_tp("ally")
+	# 同盟（近くの国と、共通の敵がいる時だけ）
+	for o in G.nations:
+		if o.id == nid or not o.alive or relState(nid, o.id) != "peace": continue
+		if not natNear(nid, o.id): continue
+		var common = false
+		for c in myWars:
+			if c != o.id and atWar(o.id, c) and natNear(nid, c) and natNear(o.id, c):
+				common = true
+				break
+		if not common:
+			for d in desiresOf(o.id):
+				if DESIRE[d.k].war and myTgt.has(desireNat(d)):
+					common = true
+					break
+		if not common and smartAI(nid):
+			for c in G.nations:
+				if c.alive and c.id != o.id and isTense(nid, c.id) and prepBy(nid, c.id) == c.id \
+						and natNear(o.id, c.id) and not isAlly(o.id, c.id) and nationPower(c.id) > nationPower(nid) * 0.8:
+					common = true
+					break
+		var vsTop: bool = top != null and not iAmTop and top.id != o.id and natHops(nid, top.id) <= DIP.reach and natHops(o.id, top.id) <= DIP.reach
+		if not common and not vsTop: continue
+		if allyDrags(nid, o.id): continue
+		var need: float = DIP.allyMin - (8 if common else 0) - (DIP.threatAllyEase if vsTop else 0)
+		var need2: float = need - 6 if vsTop and nationsAdjacent(nid, top.id) else need
+		if favorOf(nid, o.id) < need2: continue
+		if favorOf(o.id, nid) >= need2:
+			makeAlly(nid, o.id)
+			break
+		if randf() < 0.5:
+			dipReport("ally", nid, o.id, false, "先方の好感度 %d ／ 必要 %d" % [int(round(favorOf(o.id, nid))), int(round(need2))])
+			addFavor(nid, o.id, -2)
+			break
+	_tp("ties")
+	cpuPeaceTies(nid, P)
+	_tp("declare")
+	# 準備していた相手へ宣戦布告
+	for o in G.nations:
+		if o.id == nid or not o.alive: continue
+		if not canDeclareWar(nid, o.id): continue
+		var sm2 = smartAI(nid)
+		var mine2: float = atkCoalition(nid, o.id) if sm2 else nationPower(nid)
+		var th2: float = defCoalition(nid, o.id) if sm2 else max(1.0, nationPower(o.id))
+		if mine2 < th2 * (0.85 if sm2 else 0.7) or na.get("fatigue", 0) >= DIP.fatiguePeace:
+			cancelWarPrep(nid, o.id)
+			G.dip.cool[nid][o.id] = G.turn + 5; G.dip.cool[o.id][nid] = G.turn + 5
+			continue
+		declareWar(nid, o.id)
+		return
+	_tp("prep")
+	# 開戦準備
+	for o in G.nations:
+		if o.alive and (atWar(nid, o.id) or isTense(nid, o.id)): return
+	if inCalm(): return
+	if na.get("fatigue", 0) >= DIP.fatiguePeace: return
+	var danger = cpuDanger(nid)
+	if danger >= 1.0: return
+	if na.food <= 0: return
+	if smartAI(nid):
+		var ownN = 0
+		for t in G.terrs:
+			if t.owner == nid: ownN += 1
+		var goalT: float = clamp_f(3500 + ownN * 700, 3500, 34000) * P.goal
+		if nationTroops(nid) < goalT * 2: return
+	var des = desiresOf(nid)
+	var wantWar = false
+	var guarding = false
+	for d in des:
+		if d.k == "prosper": return
+		if DESIRE[d.k].war or d.k == "protect": wantWar = true
+		if d.k == "guard": guarding = true
+	var chanceMul: float = DES.warChanceMul if wantWar else (0.4 if guarding else (DES.noWishMul if G.nations.size() > 16 else 0.8))
+	if randf() > DIP.cpuWarChance.get(na.persona, 0.2) * crowdMul() * chanceMul: return
+	var mine = nationPower(nid)
+	var ambition: float = min(DIP.cpuAmbitionMax, G.turn * DIP.cpuAmbition)
+	var needW: float = DIP.cpuWarNeed.get(na.persona, 34)
+	var cand = []
+	var topT = topThreat()
+	for o in G.nations:
+		if o.id == nid or not o.alive or not canPrepare(nid, o.id): continue
+		if not nationsAdjacent(nid, o.id): continue
+		var dv = desireVs(nid, o.id)
+		if guarding and dv == null: continue
+		var sm = smartAI(nid)
+		var th: float = defCoalition(nid, o.id) if sm else max(1.0, nationPower(o.id))
+		var mineC: float = atkCoalition(nid, o.id) if sm else mine
+		var cb = hasCB(nid, o.id)
+		if not cb and not (mineC >= th * 1.8 and randf() < P.noCB): continue
+		if sm and mineC < th * 0.95: continue
+		var sc: float = (mineC / th - 1) * 100 + (60 - favorOf(nid, o.id)) + ambition \
+			+ (15 if sm and busyFrac(o.id) > 0.2 else 0) \
+			+ threatOf(o.id) * DIP.threatWarBonus - danger * DIP.dangerWeight
+		if topT != null and topT.id != o.id and nationsAdjacent(nid, topT.id): sc -= 45
+		if isTopThreat(o.id): sc += 20
+		if isTrade(nid, o.id): sc -= 15
+		if not cb: sc -= 15
+		if dv != null: sc += 10 if dv.k == "guard" else DES.warBonus
+		if sc >= needW: cand.append({"id": o.id, "sc": sc})
+	if cand.is_empty():
+		cpuFabricate(nid, P, mine)
+		return
+	cand.sort_custom(func(x, y): return x.sc > y.sc)
+	startWarPrep(nid, cand[0].id)
+func allyDrags(a: int, b: int) -> bool:
+	for o in G.nations:
+		if not o.alive or o.id == a or o.id == b: continue
+		if atWar(a, o.id) != atWar(b, o.id): return true
+	return false
+func crowdMul() -> float:
+	var n = 0
+	for x in G.nations:
+		if x.alive: n += 1
+	return min(1.0, pow(10.0 / max(1, n), 0.65))
+func cpuPeaceTies(nid: int, P: Dictionary) -> void:
+	var war = inWar(nid)
+	if tradePartners(nid).size() < TRADE.max and randf() < 0.12 + P.tradeW / 150.0:
+		var cs = []
+		for x in G.nations:
+			if x.alive and x.id != nid and tradeReason(nid, x.id) == "" and favorOf(nid, x.id) >= tradeNeed(nid) - 5: cs.append(x)
+		cs.sort_custom(func(x, y): return favorOf(x.id, nid) > favorOf(y.id, nid))
+		if cs.size():
+			var o = cs[0]
+			if favorOf(o.id, nid) >= tradeNeed(o.id): makeTrade(nid, o.id)
+	if P.pactW > -20 and randf() < 0.25 + P.pactW / 80.0:
+		var mine = nationPower(nid)
+		var cs2 = []
+		for x in G.nations:
+			if x.alive and x.id != nid and relState(nid, x.id) == "peace" and pactLeft(nid, x.id) <= 0 and nationsAdjacent(nid, x.id) \
+					and not hasCB(nid, x.id) and favorOf(nid, x.id) >= pactNeed(nid) - 10 \
+					and (nationPower(x.id) > mine * 0.9 or war or cpuDanger(nid) >= 0.6):
+				cs2.append(x)
+		cs2.sort_custom(func(x, y): return nationPower(x.id) > nationPower(y.id))
+		if cs2.size():
+			var o = cs2[0]
+			var greedy: bool = o.persona == "aggr" and nationPower(o.id) > mine * 1.3
+			if favorOf(o.id, nid) >= pactNeed(o.id) and not greedy: makePact(nid, o.id)
+func cpuFabricate(nid: int, P: Dictionary, mine: float) -> void:
+	if not (P.fab > 0) or randf() > P.fab * crowdMul(): return
+	var na = NAT(nid)
+	if na.gold < CASUS.fabGold + 4000: return
+	for o in G.nations:
+		if o.alive and fabLeft(nid, o.id) > 0: return
+	for d in desiresOf(nid):
+		if not DESIRE[d.k].war: continue
+		var x = desireNat(d)
+		if x >= 0 and NAT(x).alive and canPrepare(nid, x) and nationsAdjacent(nid, x) and not hasCB(nid, x) and mine >= nationPower(x) * 1.1:
+			startFabricate(nid, x)
+			return
+	var cs = []
+	for x in G.nations:
+		if x.alive and x.id != nid and canPrepare(nid, x.id) and nationsAdjacent(nid, x.id) \
+				and not hasCB(nid, x.id) and favorOf(nid, x.id) < 45 and mine >= nationPower(x.id) * 1.25:
+			cs.append(x)
+	cs.sort_custom(func(x, y): return nationPower(x.id) < nationPower(y.id))
+	if cs.size(): startFabricate(nid, cs[0].id)
+func cpuVassal(nid: int, lord: int) -> void:
+	var na = NAT(nid)
+	if na.get("unrest", 0) < DIP.unrestMax: return
+	var pw = nationPower(nid) / max(1.0, nationPower(lord))
+	var lordWar = 0
+	for o in G.nations:
+		if o.alive and atWar(lord, o.id) and o.id != nid: lordWar += 1
+	var ch = 0.12 + clamp_f(pw - 0.5, 0, 1.2) * 0.5 + lordWar * 0.12
+	if na.persona == "aggr": ch += 0.12
+	if na.persona == "econ": ch -= 0.06
+	if hasDesire(nid, "indep"): ch += 0.15
+	if randf() < ch: startRevolt(nid)
+func cpuVassalOffer(nid: int) -> void:
+	if inCalm(): return
+	var warring = inWar(nid)
+	if not warring and wildCount() > G.terrs.size() * 0.15: return
+	if randf() > DIP.cpuVassalAsk: return
+	var cand = []
+	for o in G.nations:
+		if o.id == nid or not o.alive: continue
+		if not canAskVassal(nid, o.id): continue
+		if not atWar(nid, o.id) and not nationsAdjacent(nid, o.id): continue
+		if atWar(nid, o.id) and warEdge(nid, o.id) < WAR.vassalEdge: continue
+		cand.append(o.id)
+	if cand.is_empty(): return
+	cand.sort_custom(func(x, y): return nationPower(x) > nationPower(y))
+	var target: int = cand[0]
+	if vassalAccept(nid, target):
+		makeVassal(nid, target, "降伏による従属" if atWar(nid, target) else "力の差による従属")
+	else:
+		dipReport("vassal", nid, target, false, "国力比 %.2f 倍 ／ 好感度 %d" % [nationPower(nid) / max(1.0, nationPower(target)), int(round(favorOf(target, nid)))])
+		addFavor(target, nid, -8)
+
+# 国どうしの近さ：国境をいくつ越えれば届くか
+var HOP_G = null
+var HOP_KEY = ""
+var HOPS = []
+func natHops(a: int, b: int) -> int:
+	if a == b: return 0
+	if a < 0 or b < 0: return 99
+	var k = str(G.get("ownRev", 0)) + "_" + str(G.edges.size())
+	if HOP_G != G or HOP_KEY != k:
+		var n: int = G.nations.size()
+		var adj = []
+		for i in n: adj.append({})
+		for e in G.edges:
+			var oa: int = T(e.a).owner
+			var ob: int = T(e.b).owner
+			if oa >= 0 and ob >= 0 and oa != ob:
+				adj[oa][ob] = true
+				adj[ob][oa] = true
+		HOPS = []
+		for s0 in n:
+			var d = []
+			d.resize(n)
+			d.fill(99)
+			d[s0] = 0
+			var q = [s0]
+			var i = 0
+			while i < q.size():
+				for v in adj[q[i]]:
+					if d[v] == 99:
+						d[v] = d[q[i]] + 1
+						q.append(v)
+				i += 1
+			HOPS.append(d)
+		HOP_G = G
+		HOP_KEY = k
+	return HOPS[a][b] if a < HOPS.size() else 99
+func natNear(a: int, b: int) -> bool: return natHops(a, b) <= DIP.reach
+var ADJ_KEY = ""
+var ADJ_G = null
+var ADJ_SET = {}
+func nationsAdjacent(a: int, b: int) -> bool:
+	if a == b or a < 0 or b < 0: return false
+	var k = str(G.get("ownRev", 0)) + "_" + str(G.edges.size())
+	if ADJ_G != G or ADJ_KEY != k:
+		ADJ_SET = {}
+		ADJ_G = G
+		ADJ_KEY = k
+		for e in G.edges:
+			var oa: int = T(e.a).owner
+			var ob: int = T(e.b).owner
+			if oa >= 0 and ob >= 0 and oa != ob: ADJ_SET[min(oa, ob) * 4096 + max(oa, ob)] = true
+	return ADJ_SET.has(min(a, b) * 4096 + max(a, b))
+func cpuPeaceTerms(a: int, b: int) -> Dictionary:
+	var opt = peaceOptions(a, b)
+	var goal = warGoal(a, b)
+	var terms = {"cede": 0, "gold": 0, "vassal": false}
+	if goal == "vassal" and opt.vassal: terms.vassal = true
+	else:
+		var want = 3 if goal == "three" else (2 if goal == "capital" else 1)
+		terms.cede = min(opt.cede, want)
+		if opt.gold and randf() < 0.6: terms.gold = opt.gold
+	if cpuDanger(a) >= 1.0 or NAT(a).get("fatigue", 0) >= DIP.fatiguePeace:
+		terms.cede = min(terms.cede, 1)
+		terms.vassal = false
+	return terms
+
+# ==================== k5_econ.gd ====================
+# 内政・方針・疲労・開拓・戦争目標・講和（元 6008〜6438）
+
+func bldCount(t: Dictionary, k: String) -> int:
+	var n = 0
+	for b in t.bld:
+		if b == k: n += 1
+	return n
+func popCap(t: Dictionary) -> int:
+	var base: float = (CFG.popCity if t.type == "city" else CFG.popFort) * t.dev + bldCount(t, "house") * CFG.houseCap
+	return int(round(base * (1.3 if t.get("trait") == "dense" else 1.0) * terrOf(t).pop))
+func popRatio(t: Dictionary) -> float: return clamp_f(t.pop / max(1.0, popCap(t)), 0, 1.2)
+func secMul(t: Dictionary) -> float:
+	if t.sec >= 90: return 1.05
+	if t.sec >= 60: return 1.0
+	return clamp_f(0.40 + t.sec / 100.0, 0.40, 1)
+func secLabel(v: float) -> String:
+	return "安泰" if v >= 80 else ("平穏" if v >= 60 else ("不安" if v >= 40 else ("険悪" if v >= CFG.revoltSec else "暴動寸前")))
+func secColor(v: float) -> String: return "#6d9c63" if v >= 60 else ("#d29b3c" if v >= 40 else "#c0504a")
+func linkBonus(t: Dictionary) -> float:
+	var l = int(clamp_f(t.get("link", 0), 0, 3))
+	return CFG.roadBonus[l] + (0.10 if t.get("trait") == "road" and t.get("link", 0) else 0.0)
+func foodGain(nid: int) -> int:
+	var f = 0.0
+	for t in G.terrs:
+		if t.owner == nid: f += bldCount(t, "farm") * CFG.farmOut * (1.3 if t.get("trait") == "fertile" else 1.0) * terrOf(t).food
+	return int(round(f))
+func traitTroop(t: Dictionary, k: String) -> float:
+	var m: float = terrOf(t).troop.get(k, 1.0)
+	if t.get("trait") == "iron" and (k == "inf" or k == "spe"): m *= 1.2
+	if t.get("trait") == "horse" and k == "cav": m *= 1.3
+	return m
+func contig(t: Dictionary, nid: int) -> int:
+	var n = 0
+	for nb in roadNbrs(t.id):
+		if T(nb.to).owner == nid: n += 1
+	return n
+func reconnect(t: Dictionary, nid: int) -> int:
+	var n = 0
+	for nb in roadNbrs(t.id):
+		var o = T(nb.to)
+		if o.owner == nid and not o.get("link", 0): n += 1
+	return n
+func foeNbrs(t: Dictionary, nid: int) -> int:
+	var n = 0
+	for nb in roadNbrs(t.id):
+		var o: int = T(nb.to).owner
+		if o != nid and atWar(nid, o): n += 1
+	return n
+func _natPop(nid: int) -> float:
+	var pop = 0.0
+	for t in G.terrs:
+		if t.owner == nid: pop += t.pop
+	return pop
+func stockCap(nid: int) -> int: return int(round(_natPop(nid) * CFG.stockCapPop))
+func levyRoom(t: Dictionary) -> int: return max(0, int(round(t.pop - popCap(t) * CFG.levyFloor)))
+func foodNeed(nid: int) -> int: return int(round(_natPop(nid) / 1000.0 * CFG.foodPop + nationTroops(nid) / 1000.0 * CFG.foodTroop))
+func isStarving(na: Dictionary) -> bool: return na.food <= 0
+func foodCap(nid: int) -> int: return int(round(3000 + foodNeed(nid) * 12))
+
+# ---------- 国家方針 ----------
+const POLICY := {
+	"none": {"n": "方針なし", "d": "特に方針を定めない", "e": {}},
+	"agri": {"n": "農業重視", "d": "食料 +20%／税収 -10%", "e": {"food": 1.2, "gold": 0.9}},
+	"trade": {"n": "商業重視", "d": "税収 +15%／兵の生産 -10%", "e": {"gold": 1.15, "troop": 0.9}},
+	"mil": {"n": "富国強兵", "d": "兵の生産 +15%／人口の伸び -10%", "e": {"troop": 1.15, "grow": 0.9}},
+	"civil": {"n": "民生重視", "d": "人口の伸び +25%／治安 +2／兵の生産 -15%", "e": {"grow": 1.25, "sec": 2, "troop": 0.85}},
+	"total": {"n": "総動員", "d": "兵の生産 +45%／食料 -20%・治安 -3・人口の伸び -40%", "e": {"troop": 1.45, "food": 0.8, "sec": -3, "grow": 0.6}},
+}
+const POLICY_KEYS := ["none", "agri", "trade", "mil", "civil", "total"]
+const POLICY_LOCK := 10
+func polOf(na) -> Dictionary: return POLICY.get(na.get("policy", "none") if na != null else "none", POLICY.none)
+func polMul(na, key: String) -> float: return polOf(na).e.get(key, 1.0)
+func polAdd(na, key: String) -> float: return polOf(na).e.get(key, 0.0)
+func polLeft(na: Dictionary) -> int: return max(0, na.get("policyAt", 0) + POLICY_LOCK - G.turn)
+func setPolicy(nid: int, key: String) -> bool:
+	var na = NAT(nid)
+	if not POLICY.has(key) or na.policy == key: return false
+	if polLeft(na) > 0: return false
+	na.policy = key
+	na.policyAt = G.turn
+	var msg = "%s が方針を「%s」に定める" % [na.name, POLICY[key].n]
+	logMsg(msg)
+	chron(msg, nid, "gov")
+	return true
+
+# ---------- 戦争疲労 ----------
+func fatigueMul(na: Dictionary) -> float:
+	var f: float = na.get("fatigue", 0)
+	if f >= CFG.fatHigh: return 1 - CFG.fatHighMul
+	if f >= CFG.fatMid: return 1 - CFG.fatMidMul
+	return 1.0
+func fatigueLabel(f: float) -> String:
+	return "厭戦" if f >= CFG.fatHigh else ("疲弊" if f >= CFG.fatMid else ("疲れ" if f >= 25 else "健全"))
+func addFatigue(nid: int, v: float) -> void:
+	if nid < 0: return
+	var na = NAT(nid)
+	na.fatigue = clamp_f(na.get("fatigue", 0) + v, 0, 100)
+
+# ---------- 領地の毎ターン更新 ----------
+func updateTerr(t: Dictionary, na: Dictionary, war: bool) -> void:
+	var starve = isStarving(na)
+	var d: float = CFG.secRecover + bldCount(t, "gov") * CFG.secGov + polAdd(na, "sec")
+	if t.chaos > 0: d += CFG.secChaos
+	if war: d += CFG.secWar
+	if starve: d += CFG.secStarve
+	t.sec = clamp_f(round(t.sec + d), 0, 100)
+	var cap = popCap(t)
+	if starve: t.pop = int(round(t.pop * 0.97))
+	elif t.chaos <= 0:
+		var rate = clamp_f(CFG.popGrow * (1 + bldCount(t, "house") * 0.5) * (t.sec / 70.0) * polMul(na, "grow"), 0, 0.4)
+		t.pop = int(round(t.pop + (cap - t.pop) * rate))
+	if t.pop > cap: t.pop = int(round(t.pop - (t.pop - cap) * 0.25))
+	t.pop = max(200, t.pop)
+	if t.sec < CFG.revoltSec and randf() < CFG.revoltRate: revolt(t, na)
+func revolt(t: Dictionary, na: Dictionary) -> void:
+	t.sec = clamp_f(t.sec + 30, 0, 100)
+	t.pop = int(round(t.pop * 0.9))
+	t.chaos = max(t.chaos, 2)
+	var msg = "%s で反乱 — 人口が減り、2ターン混乱" % t.name
+	logMsg("【反乱】" + msg, "war")
+	chron(msg, na.id, "event")
+
+# ---------- 開拓 ----------
+func settleCost(nid: int) -> int:
+	var n = 0
+	for t in G.terrs:
+		if t.owner == nid: n += 1
+	return int(round(FRONT.settleGold + n * FRONT.settleGrow))
+func settlingOf(nid: int) -> Array:
+	var r = []
+	for t in G.terrs:
+		if t.get("settle") != null and t.settle.by == nid: r.append(t)
+	return r
+func _nextToOwn(tid: int, nid: int) -> bool:
+	for nb in roadNbrs(tid):
+		if T(nb.to).owner == nid: return true
+	return false
+func settleReason(nid: int, tid: int) -> String:
+	var t = T(tid)
+	if t.owner >= 0: return "すでに治める国があります"
+	if t.get("settle") != null: return "%s が開拓中です" % NAT(t.settle.by).name
+	if not _nextToOwn(tid, nid): return "自領と隣り合う土地だけ開拓できます"
+	if settlingOf(nid).size() >= FRONT.settleMax: return "同時に開拓できるのは %d か所までです" % FRONT.settleMax
+	if NAT(nid).gold < settleCost(nid): return "ゴールドが足りません（%sG）" % fmt(settleCost(nid))
+	return ""
+func startSettle(nid: int, tid: int) -> bool:
+	if settleReason(nid, tid) != "": return false
+	NAT(nid).gold -= settleCost(nid)
+	T(tid).settle = {"by": nid, "done": G.turn + FRONT.settleTurns}
+	return true
+func settleTurn() -> void:
+	for t in G.terrs:
+		var st = t.get("settle")
+		if st == null: continue
+		var na = NAT(st.by)
+		if t.owner >= 0 or not na.alive:
+			t.settle = null
+			continue
+		if not _nextToOwn(t.id, st.by):
+			t.settle = null
+			continue
+		if G.turn < st.done - 1: continue
+		t.settle = null
+		t.owner = st.by
+		t.sec = FRONT.settleSec
+		t.chaos = 0
+		G.ownRev = G.get("ownRev", 0) + 1
+		infraChanged(t)
+		var msg = "%s が %s を開拓" % [na.name, t.name]
+		logMsg(msg)
+		chron(msg, st.by, "gov")
+func cpuSettle(nid: int) -> void:
+	if wildCount() == 0: return
+	var na = NAT(nid)
+	var P: Dictionary = PERSONA.get(na.persona, PERSONA.bal)
+	var slots: int = FRONT.settleMax - settlingOf(nid).size()
+	if slots <= 0: return
+	var war = inWar(nid)
+	var reserve: float = (7000.0 if war else 1200.0) / P.settle
+	var cand = []
+	for t in G.terrs:
+		if t.owner >= 0 or t.get("settle") != null: continue
+		var nbs = roadNbrs(t.id)
+		var mineN = 0
+		var other = false
+		for nb in nbs:
+			var o: int = T(nb.to).owner
+			if o == nid: mineN += 1
+			elif o >= 0: other = true
+		if not mineN: continue
+		var sc: float = mineN * 6 + (10 if t.type == "city" else 4) + (8 if t.get("trait") != null else 0) + t.pop / 1000.0
+		if other: sc += 5
+		cand.append({"t": t, "sc": sc})
+	cand.sort_custom(func(x, y): return x.sc > y.sc)
+	for c in cand:
+		if slots <= 0: break
+		if na.gold < settleCost(nid) + reserve: break
+		if startSettle(nid, c.t.id): slots -= 1
+var WILD_KEY = ""
+var WILD_N = 0
+func wildCount() -> int:
+	var k = str(G.get("ownRev", 0)) + "_" + str(G.turn) + "_" + str(G.terrs.size())
+	if WILD_KEY == k and WILD_G == G: return WILD_N
+	var n = 0
+	for t in G.terrs:
+		if t.owner < 0: n += 1
+	WILD_KEY = k
+	WILD_G = G
+	WILD_N = n
+	return n
+var WILD_G = null
+func terrIncome(t: Dictionary) -> int:
+	if t.type != "city" or t.owner < 0: return 0
+	var na = NAT(t.owner)
+	var m: float = (CFG.chaosMul if t.chaos > 0 else 1.0) * secMul(t) * (1 + linkBonus(t)) * fatigueMul(na) * polMul(na, "gold")
+	var mk: float = bldCount(t, "market") * BLD_OUT.market.gold * (1.3 if t.get("trait") == "trade" else 1.0)
+	return int(round((t.pop * CFG.taxRate + mk) * m))
+
+# ============================================================
+#   戦争目標・戦勝点・講和
+# ============================================================
+const WGOAL := {
+	"cede": {"n": "国境の割譲", "d": "国境の領地を1つ得る", "need": 1, "col": "#c9a227"},
+	"three": {"n": "三領地の獲得", "d": "相手から3領地を得る", "need": 3, "col": "#d8a03c"},
+	"vassal": {"n": "属国化", "d": "相手を従属させる", "need": 0, "col": "#b06fb0"},
+	"capital": {"n": "首都攻略", "d": "相手の首都を落とす", "need": 0, "col": "#c94b44"},
+	"defend": {"n": "防衛戦争", "d": "侵攻を退ける", "need": 0, "col": "#5f9c57"},
+	"claim": {"n": "要地の獲得", "d": "望んでいた領地を手に入れる", "need": 1, "col": "#e0b64a"},
+}
+func goalLabel(a: int, b: int) -> String:
+	var g = warGoal(a, b)
+	var id = G.dip.capId[a][b]
+	return WGOAL[g].n + (("（%s）" % T(id).name) if g == "claim" and id != null else "")
+var WAR = {"scoreTerr": 14, "scoreBattle": 5, "scoreCapital": 25, "scoreArmy": 6, "decay": 0.97,
+	"cedeCost": 25, "vassalEdge": 70, "goldEdge": 15, "goldRate": 0.35, "acceptBase": 18}
+func warInit(a: int, b: int, goal: String) -> void:
+	var d: Dictionary = G.dip
+	d.goal[a][b] = goal if goal != "" else "cede"
+	d.goal[b][a] = "defend"
+	d.score[a][b] = 0; d.score[b][a] = 0
+	d.taken[a][b] = 0; d.taken[b][a] = 0
+	d.capId[a][b] = NAT(b).capital; d.capId[b][a] = NAT(a).capital
+	if d.goal[a][b] == "claim":
+		var dv = desireVs(a, b)
+		if dv != null and dv.get("t") != null: d.capId[a][b] = dv.t
+		else: d.goal[a][b] = "cede"
+func warGoal(a: int, b: int) -> String:
+	if a < 0 or b < 0: return "defend"
+	var g = G.dip.goal[a][b]
+	return g if g else "defend"
+func warScore(a: int, b: int) -> float: return G.dip.score[a][b]
+func warTaken(a: int, b: int) -> int: return G.dip.taken[a][b]
+func warEdge(a: int, b: int) -> int: return int(round(warScore(a, b) - warScore(b, a)))
+func addWarScore(a: int, b: int, v: float) -> void:
+	if not atWar(a, b): return
+	addWarPts(a, b, v)
+	G.dip.score[a][b] = max(0, G.dip.score[a][b] + v)
+func goalDone(a: int, b: int) -> bool:
+	match warGoal(a, b):
+		"cede": return warTaken(a, b) >= 1
+		"three": return warTaken(a, b) >= 3
+		"vassal": return warEdge(a, b) >= WAR.vassalEdge
+		"capital", "claim":
+			var id = G.dip.capId[a][b]
+			return id != null and T(id).owner == a
+		"defend": return warEdge(a, b) >= 20 or (G.turn - G.dip.since[a][b] >= 12 and warEdge(a, b) >= 0)
+	return false
+func goalText(a: int, b: int) -> String:
+	var gk = warGoal(a, b)
+	var g = WGOAL.get(gk)
+	if g == null: return ""
+	var extra = ("（%d / %d）" % [warTaken(a, b), g.need]) if gk == "cede" or gk == "three" else ""
+	return g.n + extra
+func peaceOptions(a: int, b: int) -> Dictionary:
+	var edge = warEdge(a, b)
+	var maxCede: int = max(0, min(4, floor(edge / float(WAR.cedeCost))))
+	return {"edge": edge, "cede": maxCede, "vassal": edge >= WAR.vassalEdge and canAskVassal(a, b),
+		"gold": int(round(NAT(b).gold * WAR.goldRate)) if edge >= WAR.goldEdge else 0}
+func peaceAccept(a: int, b: int, terms: Dictionary) -> bool:
+	var edge = warEdge(a, b)
+	var nb = NAT(b)
+	var cost: float = terms.get("cede", 0) * WAR.cedeCost + (WAR.vassalEdge if terms.get("vassal", false) else 0) + (WAR.goldEdge if terms.get("gold", 0) else 0)
+	var will: float = edge + nb.get("fatigue", 0) * 0.5 + cpuDanger(b) * 25 - WAR.acceptBase
+	if nb.food <= 0: will += 15
+	var own = 0
+	for t in G.terrs:
+		if t.owner == b: own += 1
+	if own <= 3: will += 20
+	return will >= cost
+func settlePeace(a: int, b: int, terms: Dictionary) -> Array:
+	var W = warObj(a, b)
+	if W != null:
+		var demands: bool = terms.get("cede", 0) > 0 or terms.get("gold", 0) > 0 or terms.get("vassal", false)
+		var win = otherSide(W, b)
+		var alive = []
+		for n in win:
+			if NAT(n).alive: alive.append(n)
+		alive.sort_custom(func(x, y): return W.sc.get(x, 0) > W.sc.get(y, 0))
+		var top = alive[0] if alive.size() else null
+		var vasTo = top if terms.get("vassal", false) and top != null and canAskVassal(top, b) else null
+		if terms.get("gold", 0) and top != null:
+			var g: int = min(NAT(b).gold, terms.gold)
+			var tot = 0.0
+			for n in win: tot += W.sc.get(n, 0)
+			if tot == 0: tot = 1
+			NAT(b).gold -= g
+			for n in win:
+				if NAT(n).alive: NAT(n).gold += int(round(g * W.sc.get(n, 0) / tot))
+		var lines = endWar(W, {"winner": win, "full": false} if demands else null)
+		if vasTo != null and canAskVassal(vasTo, b):
+			makeVassal(vasTo, b, "講和による従属")
+			lines.append("%s は %s の属国に" % [NAT(b).name, NAT(vasTo).name])
+		return lines
+	var lines2 = []
+	if terms.get("cede", 0):
+		var list = cedeTerrs(b, a, terms.cede)
+		if list.size():
+			var names = []
+			for t in list: names.append(t.name)
+			lines2.append("%s を割譲" % "・".join(names))
+	if terms.get("gold", 0):
+		var g2: int = min(NAT(b).gold, terms.gold)
+		NAT(b).gold -= g2
+		NAT(a).gold += g2
+		lines2.append("賠償金 %s G" % fmt(g2))
+	var vas: bool = terms.get("vassal", false) and canAskVassal(a, b)
+	makePeace(a, b)
+	if vas: makeVassal(a, b, "講和による従属")
+	if lines2.size():
+		var msg = "講和条件：%s は %s へ %s" % [NAT(b).name, NAT(a).name, "、".join(lines2)]
+		logMsg(msg, "war")
+		chron(msg, a, "gov")
+	return lines2
+func cedeTerrs(from: int, to: int, n: int) -> Array:
+	var mine = []
+	for t in G.terrs:
+		if t.owner == from: mine.append(t)
+	var border = []
+	for t in mine:
+		if _nextToOwn(t.id, to): border.append(t)
+	border.sort_custom(func(x, y):
+		var a1 = contig(x, to)
+		var b1 = contig(y, to)
+		if a1 != b1: return a1 > b1
+		var a2 = contig(x, from)
+		var b2 = contig(y, from)
+		if a2 != b2: return a2 < b2
+		return x.dev < y.dev)
+	var pool = border.duplicate()
+	for t in mine:
+		if not border.has(t) and not t.cap: pool.append(t)
+	var out = []
+	for t in pool:
+		if out.size() >= n: break
+		if t.cap and mine.size() > 1: continue
+		out.append(t)
+	for t in out:
+		t.owner = to
+		G.ownRev = G.get("ownRev", 0) + 1
+		t.chaos = max(t.chaos, 2)
+		t.sec = min(t.sec, CFG.secCapture + 10)
+		chron("%s が %s に割譲される" % [t.name, NAT(to).name], to, "gov")
+		invalidateTerr(t.id)
+	if out.size():
+		invalidateSupply()
+		checkNations()
+	return out
+func cpuWarGoal(a: int, b: int) -> String:
+	var ratio = nationPower(a) / max(1.0, nationPower(b))
+	var P: Dictionary = PERSONA.get(NAT(a).persona, PERSONA.bal)
+	var dv = desireVs(a, b)
+	if dv != null and dv.get("t") != null: return "claim"
+	if dv != null and dv.k == "feud": return "vassal" if ratio >= DIP.vassalWarRatio else "capital"
+	if dv != null and (dv.k == "protect" or dv.k == "guard"): return "defend"
+	if ratio >= DIP.vassalWarRatio and randf() < 0.5: return "vassal"
+	if ratio >= 1.8 and (P.army > 0 or randf() < 0.4): return "capital"
+	if ratio >= 1.25: return "three"
+	return "cede"
+
+# ==================== k6_turn.gd ====================
+# ターン進行・生産・出来事・節目・CPUの軍（元 6439〜7218）
+
+signal phase_changed(nid, sub: String)   # nid=null で消す
+signal refreshed                         # 画面を描き直す
+signal turn_ended
+## 画面側が「その領地は今見えているか」を答える（無ければ常に見えている扱い）
+var onScreenFn: Callable = Callable()
+
+func sleep_ms(ms: int) -> void:
+	if ms <= 0:
+		await get_tree().process_frame
+		return
+	await get_tree().create_timer(ms / 1000.0).timeout
+func phaseWait(nid: int) -> int:
+	return int(round(CFG.phaseDelay * 0.5)) if nid == followNat() else 0
+func setPhase(nid, sub := "") -> void: phase_changed.emit(nid, sub)
+
+var YIELD_AT = 0
+var BEAT_SPENT = 0
+var BEAT_MAX = 2500
+var PROF = {}
+var _TPT = 0
+var _TPL = ""
+func _tp(l: String) -> void:
+	var now = Time.get_ticks_usec()
+	if _TPL != "": PROF["dip:" + _TPL] = PROF.get("dip:" + _TPL, 0) + now - _TPT
+	_TPT = now
+	_TPL = l
+func endTurn() -> void:
+	BEAT_SPENT = 0
+	if UI.busy or G == null or G.over != null: return
+	UI.busy = true
+	var _t0 = Time.get_ticks_msec()
+	PROF = {}
+	for n in G.nations.size():
+		if G.over != null: break
+		if not NAT(n).alive: continue
+		var _a = Time.get_ticks_usec()
+		setPhase(n, "")
+		var _b = Time.get_ticks_usec()
+		var pw = phaseWait(n)
+		if pw > 0:
+			PROF["n:pw"] = PROF.get("n:pw", 0) + 1000
+			await sleep_ms(pw)
+			YIELD_AT = Time.get_ticks_msec()
+		elif Time.get_ticks_msec() - YIELD_AT > 120:
+			PROF["n:y0"] = PROF.get("n:y0", 0) + 1000
+			await sleep_ms(0)
+			YIELD_AT = Time.get_ticks_msec()
+		var _c = Time.get_ticks_usec()
+		await cpuTurn(n)
+		var _d = Time.get_ticks_usec()
+		PROF["loop:phase"] = PROF.get("loop:phase", 0) + _b - _a
+		PROF["loop:yield"] = PROF.get("loop:yield", 0) + _c - _b
+		PROF["loop:cpuTurn"] = PROF.get("loop:cpuTurn", 0) + _d - _c
+	setPhase(null)
+	UI.actArmy = null
+	await flushDip()
+	var _t1 = Time.get_ticks_msec()
+	production()
+	settleTurn()
+	for na in G.nations:
+		for a in na.armies:
+			if a != null: a.moved = false
+	siegeTurn()
+	randomEvent()
+	var nn: int = G.nations.size()
+	for a in nn:
+		for b2 in nn:
+			if a != b2 and G.dip.score[a][b2]: G.dip.score[a][b2] *= WAR.decay
+	dipTurn()
+	decayThreat()
+	checkMilestones()
+	recordHistory()
+	refreshSupply(true)
+	G.turn += 1
+	G.log.append({"s": "第 %d ターン" % G.turn, "cls": "sep", "t": G.turn})
+	if G.turn > TURN_MAX:
+		logMsg("ターン上限に到達しました", "war")
+		endGame(-1)
+	var _t2 = Time.get_ticks_msec()
+	UI.busy = false
+	refreshed.emit()
+	await flushDip()
+	turn_ended.emit()
+
+func production() -> void:
+	refreshSupply()
+	var tradeG = []
+	for n in G.nations: tradeG.append(tradeIncome(n.id))
+	var ownBy = {}
+	for t in G.terrs:
+		if t.owner >= 0:
+			if not ownBy.has(t.owner): ownBy[t.owner] = []
+			ownBy[t.owner].append(t)
+	for na in G.nations:
+		if not na.alive: continue
+		var own: Array = ownBy.get(na.id, [])
+		var war = inWar(na.id)
+		var starve = isStarving(na)
+		var fat = fatigueMul(na)
+		var pGold = polMul(na, "gold")
+		var pFood = polMul(na, "food")
+		var pTroop = polMul(na, "troop")
+		var gold = 0.0
+		var food = 0.0
+		var levy = 0.0
+		var add = {"inf": 0.0, "spe": 0.0, "arc": 0.0, "cav": 0.0}
+		var room2: float = max(0, stockCap(na.id) - total(na.stock))
+		for t in own:
+			var base: float = (CFG.chaosMul if t.chaos > 0 else 1.0) * secMul(t) * fat
+			var gm: float = base * (1 + linkBonus(t)) * pGold
+			var tm: float = base * (0.5 if starve else 1.0) * pTroop
+			if t.type == "city": gold += t.pop * CFG.taxRate * gm
+			var room: float = levyRoom(t)
+			for b in t.bld:
+				if not b: continue
+				if b == "market":
+					gold += BLD_OUT.market.gold * gm * (1.3 if t.get("trait") == "trade" else 1.0)
+					continue
+				if b == "farm":
+					food += CFG.farmOut * (1.3 if t.get("trait") == "fertile" else 1.0) * terrOf(t).food * pFood
+					continue
+				var o = BLD_OUT.get(b)
+				if o == null: continue
+				for k in TK:
+					if not o.has(k): continue
+					var n: float = o[k] * tm * traitTroop(t, k)
+					n = min(n, room / CFG.levyPop, room2)
+					if n <= 0: continue
+					add[k] += n
+					var used: float = n * CFG.levyPop
+					room -= used; room2 -= n; levy += used
+					t.pop = max(0, int(round(t.pop - used)))
+		if na.get("badHarv", 0) > 0:
+			gold *= 0.6; food *= 0.6; na.badHarv -= 1
+		na.goldIn = int(round(gold))
+		na.tradeIn = tradeG[na.id]
+		gold += na.tradeIn
+		if na.get("revoltBuff", 0) > 0: gold *= 1 + DIP.revoltProd
+		var lord = lordOf(na.id)
+		if lord != null:
+			var pay = int(round(gold * DIP.tribute))
+			gold -= pay
+			NAT(lord).gold += pay
+			na.tribute = pay
+		else: na.tribute = 0
+		na.gold += int(round(gold))
+		na.levy = int(round(levy))
+		for k in TK: na.stock[k] += int(round(add[k]))
+		var need = foodNeed(na.id)
+		na.foodIn = int(round(food))
+		na.foodNeed = need
+		na.food = int(clamp_f(round(na.food + food - need), -3000, foodCap(na.id)))
+		for t in own: updateTerr(t, na, war)
+		na.fatigue = clamp_f(na.get("fatigue", 0) + (CFG.fatWar if war else CFG.fatPeace), 0, 100)
+	for t in G.terrs:
+		if t.chaos > 0: t.chaos -= 1
+		if t.get("devP", false):
+			t.devP = false
+			t.dev = min(5, t.dev + 1)
+			invalidateTerr(t.id)
+		if t.get("infraP", false):
+			t.infraP = false
+			t.infra = min(3, t.get("infra", 1) + 1)
+			infraChanged(t)
+		if t.get("infraBroke", 0):
+			t.infraBroke -= 1
+			if t.infraBroke <= 0:
+				t.infraBroke = 0
+				t.infra = min(3, t.get("infra", 1) + 1)
+				infraChanged(t)
+				if concerns([t.owner]): logMsg("%s の道や橋が復旧しました" % t.name, "good")
+
+# ============================================================
+#   出来事（CPU が選ぶ）
+# ============================================================
+const EVENTS := [
+	{"k": "bad", "n": "凶作", "w": 1.1, "opts": [{"n": "国庫を開放する", "need": 5000}, {"n": "各都市に任せる"}]},
+	{"k": "plague", "n": "疫病", "w": 0.9, "opts": [{"n": "都市を封鎖する", "need": 4000}, {"n": "成り行きに任せる"}]},
+	{"k": "merc", "n": "傭兵団の来訪", "w": 1.0, "opts": [{"n": "雇い入れる", "need": 8000}, {"n": "断る"}]},
+	{"k": "bandit", "n": "山賊の跋扈", "w": 1.0, "opts": [{"n": "討伐軍を出す", "need": 3000}, {"n": "放っておく"}]},
+	{"k": "good", "n": "豊作", "w": 1.1, "opts": [{"n": "蔵に納める"}, {"n": "民に分け与える"}]},
+	{"k": "road", "n": "道や橋の崩落", "w": 1.0, "opts": [{"n": "ただちに修復する", "need": 4000}, {"n": "後回しにする"}]},
+	{"k": "gen", "n": "名将の来訪", "w": 0.8, "opts": [{"n": "迎え入れる", "need": 6000}, {"n": "断る"}]},
+]
+func _evOk(na: Dictionary, ev: Dictionary, i: int) -> bool:
+	var o: Dictionary = ev.opts[i]
+	if ev.k == "gen" and i == 0: return na.gold >= 6000 and na.gens.size() < GEN_MAX
+	return na.gold >= o.get("need", 0)
+func _ownOf(nid: int) -> Array:
+	var r = []
+	for t in G.terrs:
+		if t.owner == nid: r.append(t)
+	return r
+func _evRun(na: Dictionary, ev: Dictionary, i: int) -> String:
+	var own = _ownOf(na.id)
+	match ev.k + str(i):
+		"bad0":
+			na.gold -= 5000
+			for t in own: t.sec = clamp_f(t.sec + 8, 0, 100)
+			return "蔵を開き、民を飢えから守った"
+		"bad1":
+			na.food -= 1500
+			for t in own:
+				t.pop = int(round(t.pop * 0.97)); t.sec = clamp_f(t.sec - 8, 0, 100)
+			return "各地は自力で凌いだが、民は減り不満が残った"
+		"plague0":
+			na.gold -= 4000
+			for t in own:
+				if t.type == "city":
+					t.pop = int(round(t.pop * 0.98)); t.sec = clamp_f(t.sec - 3, 0, 100)
+			return "封鎖によって広がりは抑えられた"
+		"plague1":
+			for t in own:
+				t.pop = int(round(t.pop * 0.93)); t.sec = clamp_f(t.sec - 6, 0, 100)
+			return "疫病は広がり、多くの民が失われた"
+		"merc0":
+			na.gold -= 8000; na.stock.inf += 2500; na.stock.arc += 800
+			return "傭兵団が旗の下に加わった"
+		"merc1": return "傭兵団は他国へ去っていった"
+		"bandit0":
+			na.gold -= 3000
+			for t in own: t.sec = clamp_f(t.sec + 10, 0, 100)
+			return "山賊は討ち払われ、往来に平穏が戻った"
+		"bandit1":
+			na.gold = int(round(na.gold * 0.9))
+			for t in own: t.sec = clamp_f(t.sec - 10, 0, 100)
+			return "隊商は荒らされ、民の信頼も損なわれた"
+		"good0":
+			na.food += 2500
+			return "蔵は満ち、当分の憂いはない"
+		"good1":
+			for t in own:
+				t.sec = clamp_f(t.sec + 12, 0, 100); t.pop = int(round(t.pop * 1.04))
+			return "民は喜び、村々は賑わった"
+		"road0":
+			na.gold -= 4000
+			return "人夫を集め、道や橋はすぐに直された"
+		"road1":
+			var cand = []
+			for t in own:
+				if t.get("infra", 1) > 1 and not t.get("infraBroke", 0): cand.append(t)
+			if cand.is_empty(): return "幸い、大きな被害はなかった"
+			var t = pick(cand)
+			t.infra -= 1
+			t.infraBroke = 3
+			infraChanged(t)
+			return "%s のインフラが3ターン「%s」に落ちた" % [t.name, INFRA_N[t.infra]]
+		"gen0":
+			na.gold -= 6000
+			var pts = randomPts()
+			pts[pick(GEN_ABIL).k] += 1
+			pts[pick(GEN_ABIL).k] += 1
+			var g = mkGen(G, na, pts)
+			return "%s が旗下に加わった" % g.name
+		"gen1": return "将は静かに去っていった"
+	return ""
+func randomEvent() -> void:
+	if randf() > CFG.eventRate: return
+	var alive = []
+	for n in G.nations:
+		if n.alive: alive.append(n)
+	if alive.is_empty(): return
+	var na: Dictionary = pick(alive)
+	if _ownOf(na.id).is_empty(): return
+	var pool = []
+	for ev in EVENTS:
+		for i in int(round(ev.w * 10)): pool.append(ev)
+	var ev: Dictionary = pick(pool)
+	var i = cpuEventChoice(na, ev)
+	var res = _evRun(na, ev, i)
+	var o: Dictionary = ev.opts[i]
+	var msg = "%s — %s：%s／%s" % [ev.n, na.name, o.n, res]
+	logMsg("【出来事】" + msg)
+	chron("%s — %s（%s）" % [ev.n, o.n, res], na.id, "event")
+func cpuEventChoice(na: Dictionary, ev: Dictionary) -> int:
+	var rich: bool = na.gold > 20000
+	var poor: bool = na.gold < 6000
+	if not _evOk(na, ev, 0): return 1
+	if ev.k == "merc": return 0 if rich and (na.persona == "aggr" or cpuDanger(na.id) >= 0.8) else 1
+	if ev.k == "gen": return 0 if na.gens.size() < 6 and rich else 1
+	if ev.k == "good": return 0 if na.food < foodNeed(na.id) * 6 else 1
+	if poor: return 1
+	return 0 if na.persona == "econ" or na.persona == "def" or rich else 1
+
+# ---------- 年代記の節目 ----------
+const TERR_MILE := [5, 10, 15, 20, 30, 40, 50, 60, 70]
+const WIN_MILE := [5, 10, 20, 30, 50]
+func checkMilestones() -> void:
+	var cnt = {}
+	for t in G.terrs: cnt[t.owner] = cnt.get(t.owner, 0) + 1
+	for na in G.nations:
+		if not na.alive: continue
+		if not na.has("mile"): na.mile = {}
+		var own: int = cnt.get(na.id, 0)
+		for m in TERR_MILE:
+			if own >= m and not na.mile.has("t%d" % m):
+				na.mile["t%d" % m] = 1
+				chron("%s の版図が %d 領地に達する" % [na.name, m], na.id, "mile")
+		for a in na.armies:
+			if a == null: continue
+			for m in WIN_MILE:
+				var key = "w%d_%d" % [a.idx, m]
+				if a.get("wins", 0) >= m and not na.mile.has(key):
+					na.mile[key] = 1
+					chron("%s %s、通算 %d 勝" % [na.name, a.name, m], na.id, "mile")
+			var g = genOf(na, a.gen)
+			var tot = total(a.t)
+			if g == null: continue
+			if tot > g.get("maxLed", 0): g.maxLed = tot
+			if tot >= 8000 and tot >= na.get("recLed", 0) * 1.25:
+				na.recLed = tot
+				chron("%s 将軍が最大兵力 %s を率いる" % [g.name, fmt(tot)], na.id, "mile")
+func recordHistory() -> void:
+	var cnt = {}
+	for t in G.terrs: cnt[t.owner] = cnt.get(t.owner, 0) + 1
+	var o = []
+	var p = []
+	for n in G.nations:
+		o.append(cnt.get(n.id, 0))
+		p.append(nationPower(n.id))
+	G.hist.append({"t": G.turn, "o": o, "p": p})
+	if G.hist.size() > 600:
+		var h = []
+		for i in G.hist.size():
+			if i % 2 == 0: h.append(G.hist[i])
+		G.hist = h
+
+# ---------- CPU ----------
+func prodPerTurn(nid: int) -> int:
+	var n = 0
+	for t in G.terrs:
+		if t.owner != nid: continue
+		for b in t.bld:
+			var o = BLD_OUT.get(b) if b else null
+			if o == null: continue
+			for k in TK:
+				if o.has(k): n += o[k]
+	return n
+func powerOf(list: Array, t, isDef: bool) -> float:
+	if list.is_empty(): return 0.0
+	var s = sideStats(list, t if t != null else T(list[0].at), isDef)
+	return s.tot * (s.def if isDef else s.atk) / 100.0
+var FOCUS_CACHE = {}
+var SPROG_MEMO = {}
+func stratBonus(nid: int, t: Dictionary) -> float:
+	var b = 0.0
+	var W = warObj(nid, t.owner)
+	if t.get("wTag") != null and t.get("wOrig") == nid: b += 30
+	if W != null:
+		b += vpOf(t) * 2
+		var foe: int = t.wOrig if t.get("wTag") == W.id and t.get("wOrig") != null else t.owner
+		var sd = sideOf(W, foe)
+		if sd != null and not sd.has(nid):
+			var k = "%d_%d_%d_%d" % [W.id, foe, G.turn, G.get("ownRev", 0)]
+			var v = SPROG_MEMO.get(k)
+			if v == null:
+				if SPROG_MEMO.size() > 500: SPROG_MEMO.clear()
+				v = surrenderProg(W, foe) / max(0.2, surrenderLimit(foe))
+				SPROG_MEMO[k] = v
+			b += v * 25
+	var foes = FOCUS_CACHE.get(nid)
+	if foes != null and foes == t.owner: b += 12
+	return b
+func focusFoe(nid: int):
+	var best = null
+	var bs = INF
+	for o in G.nations:
+		if not o.alive or o.id == nid or not atWar(nid, o.id) or not nationsAdjacent(nid, o.id): continue
+		var v = nationPower(o.id) * (1 - busyFrac(o.id) * 0.5)
+		if v < bs:
+			bs = v
+			best = o.id
+	return best
+func cpuObjective(nid: int, list: Array, bfsOf: Dictionary):
+	if not inWar(nid): return null
+	var cands = []
+	var smart = smartAI(nid)
+	if smart: FOCUS_CACHE[nid] = focusFoe(nid)
+	var wantT = {}
+	for d in desiresOf(nid):
+		if d.get("t") != null: wantT[d.t] = true
+	for t in G.terrs:
+		if t.owner == nid or not atWar(nid, t.owner): continue
+		var stage = null
+		var sd = INF
+		for nb in roadNbrs(t.id):
+			if T(nb.to).owner != nid: continue
+			var near = INF
+			for a in list:
+				var dd = bget(bfsOf[a.idx], nb.to)
+				if dd != null and dd < near: near = dd
+			if near < sd:
+				sd = near
+				stage = nb.to
+		if stage == null or sd == INF: continue
+		var gar = []
+		for x in armiesAt(t.id):
+			if total(x.t) > 0: gar.append(x)
+		var dp = powerOf(gar, t, true) if gar.size() else 0.0
+		var goalCap: float = (60 if warGoal(nid, t.owner) == "capital" and t.cap else 0) \
+			+ (90 if G.dip.capId[nid][t.owner] == t.id and warGoal(nid, t.owner) == "claim" else 0) \
+			+ (40 if wantT.has(t.id) else 0)
+		var sc: float = (45 if t.cap else 0) + goalCap + t.dev * 5 + (8 if t.get("trait") != null else 0) \
+			+ (-8 if t.type == "fort" else 6) + (15 if isTopThreat(t.owner) else 0) \
+			+ contig(t, nid) * 10 + reconnect(t, nid) * 14 - foeNbrs(t, nid) * 6 \
+			- dp / 900.0 - sd * 7 + (stratBonus(nid, t) if smart else 0.0)
+		cands.append({"tid": t.id, "stage": stage, "sc": sc})
+	if cands.is_empty(): return null
+	cands.sort_custom(func(x, y): return x.sc > y.sc)
+	return cands[0]
+func nearestOwnCity(_a, bs: Dictionary, nid: int):
+	var best = null
+	var bd = INF
+	for t in G.terrs:
+		if t.owner != nid: continue
+		var d = bget(bs, t.id)
+		if d == null: continue
+		var w: float = d - (1 if t.type == "city" else 0) - (1 if t.cap else 0)
+		if w < bd:
+			bd = w
+			best = t.id
+	return best
+func cpuPolicy(nid: int, P: Dictionary) -> void:
+	var na = NAT(nid)
+	if polLeft(na) > 0: return
+	var war = inWar(nid)
+	var danger = cpuDanger(nid)
+	var bal = foodGain(nid) - foodNeed(nid)
+	var want = "none"
+	if bal < 0 and na.food < foodNeed(nid) * 5: want = "agri"
+	elif danger >= 1.0: want = "total"
+	elif war: want = "total" if P.army > 0 else "mil"
+	elif hasDesire(nid, "guard"): want = "mil"
+	elif hasDesire(nid, "prosper"): want = "trade" if na.persona == "econ" else "civil"
+	elif na.persona == "econ": want = "trade"
+	elif na.persona == "def": want = "civil"
+	elif na.persona == "aggr": want = "mil"
+	else: want = "trade" if randf() < 0.5 else "civil"
+	if want != na.get("policy", "none"): setPolicy(nid, want)
+
+func _bldN(t: Dictionary) -> int:
+	var n = 0
+	for b in t.bld:
+		if b: n += 1
+	return n
+func _hasTroopBld(t: Dictionary) -> bool:
+	for b in t.bld:
+		if TK.has(b): return true
+	return false
+func _troopBldN(t: Dictionary) -> int:
+	var n = 0
+	for b in t.bld:
+		if TK.has(b): n += 1
+	return n
+func _foeArmyAt(tid: int, nid: int) -> bool:
+	for x in armiesAt(tid):
+		if x.owner != nid and atWar(nid, x.owner) and total(x.t) > 0: return true
+	return false
+func _setBld(t: Dictionary, slot: int, k: String) -> void:
+	while t.bld.size() <= slot: t.bld.append(null)
+	t.bld[slot] = k
+
+func cpuTurn(nid: int) -> void:
+	refreshSupply()
+	var na = NAT(nid)
+	if not na.alive: return
+	var own = _ownOf(nid)
+	if own.is_empty(): return
+	var P: Dictionary = PERSONA.get(na.persona, PERSONA.bal)
+	var _pt = [Time.get_ticks_usec(), "方針"]
+	var phase = func(msg: String):
+		var now = Time.get_ticks_usec()
+		PROF[_pt[1]] = PROF.get(_pt[1], 0) + now - _pt[0]
+		_pt[0] = now
+		_pt[1] = msg
+		var shown = msg.get_slice(":", 0)
+		setPhase(nid, P.n + ((" ／ " + shown) if shown != "" else ""))
+	cpuPolicy(nid, P)
+	phase.call("外交")
+	cpuDiplomacy(nid)
+	_tp("")
+	await flushDip()
+	if not na.alive: return
+	phase.call("内政")
+	cpuSettle(nid)
+	# --- 内政：建物 ---
+	var mk = 0
+	for t in own:
+		if t.bld.has("market"): mk += 1
+	var troopCap: float = clamp_f(3500 + own.size() * 700, 3500, 34000) * P.goal
+	var war = inWar(nid)
+	var glut: bool = total(na.stock) > troopCap * 4 and not war
+	var cand = []
+	for t in own:
+		if _bldN(t) < t.dev: cand.append(t)
+	cand.sort_custom(func(a, b): return a.dev > b.dev)
+	var bal = foodGain(nid) - foodNeed(nid)
+	var lowSec = 0
+	for x in own:
+		if x.sec < 45: lowSec += 1
+	for t in cand:
+		if na.gold < 2500: break
+		var k = ""
+		if bal <= 0 or na.food < 800: k = "farm"
+		elif lowSec > own.size() * 0.25 and randf() < 0.6: k = "gov"
+		elif t.type == "city" and mk < max(1, own.size() * P.mkt): k = "market"
+		elif t.type == "city" and popRatio(t) > 0.9 and randf() < 0.35 + P.mkt * 0.3: k = "house"
+		else:
+			var r = randf()
+			var acc = 0.0
+			k = "inf"
+			for kk in TK:
+				acc += P.mix[kk]
+				if r <= acc:
+					k = kk
+					break
+			if t.type == "city" and randf() < P.mkt * 0.6: k = "market"
+		if TK.has(k) and levyRoom(t) < 900: k = "house" if t.type == "city" else "farm"
+		if TK.has(k) and glut: k = "market" if t.type == "city" else "farm"
+		if BLD[k].get("cityOnly", false) and t.type == "fort": k = "farm"
+		if na.gold < BLD[k].cost: continue
+		var slot = -1
+		for i in t.dev:
+			if i >= t.bld.size() or not t.bld[i]:
+				slot = i
+				break
+		if slot < 0: continue
+		na.gold -= BLD[k].cost
+		_setBld(t, slot, k)
+		if k == "market": mk += 1
+		if k == "farm": bal += CFG.farmOut * terrOf(t).food
+	if glut and na.gold >= BLD.market.cost * 2:
+		for t3 in own:
+			if _hasTroopBld(t3):
+				var i = -1
+				for j in t3.bld.size():
+					if TK.has(t3.bld[j]):
+						i = j
+						break
+				var k2 = "market" if t3.type == "city" else "farm"
+				na.gold -= BLD[k2].cost
+				t3.bld[i] = k2
+				break
+	if na.food < -200 and na.gold >= BLD.farm.cost:
+		var best = null
+		for t in own:
+			if _hasTroopBld(t) and (best == null or _troopBldN(t) > _troopBldN(best)): best = t
+		if best != null:
+			for j in best.bld.size():
+				if TK.has(best.bld[j]):
+					best.bld[j] = "farm"
+					break
+			na.gold -= BLD.farm.cost
+			chron("%s が %s の兵舎を農場に建て替える" % [na.name, best.name], nid, "gov")
+	# --- 内政：開発・インフラ ---
+	var prosper = hasDesire(nid, "prosper")
+	var reserve: float = max(P.devG * (0.4 if prosper else 1.0), na.get("goldIn", 0) * (3 if prosper else 6))
+	var devList = []
+	for t in own:
+		if t.dev < 5 and not t.get("devP", false): devList.append(t)
+	devList.sort_custom(func(a, b):
+		if a.cap != b.cap: return a.cap
+		if (a.type == "city") != (b.type == "city"): return a.type == "city"
+		if a.dev != b.dev: return a.dev < b.dev
+		return a.pop > b.pop)
+	var devMax: int = 1 + own.size() / 10
+	var devN = 0
+	for t in devList:
+		if devN >= devMax or na.gold - DEV_COST[t.dev] < reserve: break
+		na.gold -= DEV_COST[t.dev]
+		t.devP = true
+		devN += 1
+	var rich: bool = na.gold > reserve * 1.3
+	if na.gold > P.roadG * (0.5 if prosper else 1.0) and (rich or randf() < INFRA_RATE.get(na.persona, 0.12) * (2.5 if prosper else 1.0)):
+		var myAt = {}
+		for x in na.armies:
+			if x != null: myAt[x.at] = true
+		var front = {}
+		for t in own:
+			for nb in roadNbrs(t.id):
+				var o: int = T(nb.to).owner
+				if o >= 0 and o != nid and atWar(nid, o):
+					front[t.id] = true
+					break
+		var score = func(t): return t.pop / 1500.0 + t.dev * 2 + (8 if t.cap else 0) + TERR_COST.get(t.terrain, 1) * 3 \
+			+ (10 if front.has(t.id) else 0) + (4 if myAt.has(t.id) else 0) - t.get("infra", 1) * 4
+		var lst = []
+		for t in own:
+			if t.get("infra", 1) < 3 and not t.get("infraP", false) and not t.get("infraBroke", 0): lst.append(t)
+		lst.sort_custom(func(a, b): return score.call(a) > score.call(b))
+		var nMax: int = 1 + own.size() / 20 if rich else 1
+		var kk2 = 0
+		for t in lst:
+			if kk2 >= nMax: break
+			var c: int = INFRA_COST[t.get("infra", 1) + 1]
+			if na.gold - c < (reserve if rich else P.roadG * 0.5): break
+			na.gold -= c
+			t.infraP = true
+			kk2 += 1
+	# --- 将軍 ---
+	var armed = 0
+	for x in na.armies:
+		if x != null: armed += 1
+	if na.gens.size() < min(GEN_MAX, armed + 1) and na.gold > GEN_COST + 6000:
+		na.gold -= GEN_COST
+		mkGen(G, na, randomPts())
+	# --- 軍団編成 ---
+	phase.call("軍団の編成・補充")
+	var maxA = int(clamp_f(2 + own.size() / 3 + P.army * 2, 1, ARMY_MAX))
+	var stockTot = total(na.stock)
+	var goalT: float = clamp_f(3500 + own.size() * 700, 3500, 34000) * P.goal
+	if armed < maxA and stockTot > 3000:
+		var slot: int = na.armies.find(null)
+		if slot >= 0:
+			var a = mkArmy(nid, slot, na.capital)
+			for k in TK:
+				var g: int = min(int(floor(na.stock[k] * 0.8)), int(round(goalT * P.mix[k])))
+				a.t[k] = g
+				a.target[k] = int(round(goalT * P.mix[k]))
+				na.stock[k] -= g
+			na.armies[slot] = a; ARMY_REV += 1
+	for a in na.armies:
+		if a == null: continue
+		if a.gen == null:
+			for g in na.gens:
+				if g.army == null:
+					a.gen = g.id
+					g.army = a.idx
+					break
+		for k in TK: a.target[k] = int(round(goalT * P.mix[k]))
+		if T(a.at).owner == nid: reinforce(a)
+	phase.call("進軍")
+	# ============ 進軍：守りを固め、主目標に兵を集めて攻める ============
+	var list = []
+	for x in na.armies:
+		if x != null and total(x.t) > 0: list.append(x)
+	var danger = cpuDanger(nid)
+	var foes = []
+	for o in G.nations:
+		if o.alive and atWar(nid, o.id): foes.append(o)
+	var foeTerrs = []
+	if foes.size():
+		for t in G.terrs:
+			if t.owner != nid and atWar(nid, t.owner): foeTerrs.append(t)
+	var RK = {}
+	var frontier = []
+	for t in own:
+		for nb in roadNbrs(t.id):
+			if T(nb.to).owner != nid:
+				frontier.append(t)
+				break
+	for t2 in frontier:
+		var r = 0
+		for nb in roadNbrs(t2.id):
+			var o: int = T(nb.to).owner
+			if o == nid: continue
+			if atWar(nid, o): r += 3
+			elif isTense(nid, o): r += 2
+			if isTopThreat(o): r += 2
+			if atWar(nid, o):
+				for x in armiesAt(nb.to):
+					if x.owner != nid and total(x.t) > 0:
+						r += 2
+						break
+		if t2.cap: r += 3
+		if t2.type == "fort": r += 1
+		RK[t2.id] = r
+	frontier.sort_custom(func(x, y): return RK[x.id] > RK[y.id] if RK[x.id] != RK[y.id] else x.dev > y.dev)
+	var hot = []
+	for t in frontier:
+		if RK[t.id] > 0: hot.append(t)
+	if smartAI(nid) and foes.size():
+		var cap = T(na.capital)
+		if cap.owner == nid:
+			var near2 = {cap.id: true}
+			for nb in roadNbrs(cap.id):
+				near2[nb.to] = true
+				for nb2 in roadNbrs(nb.to): near2[nb2.to] = true
+			var threat = false
+			for id in near2:
+				if _foeArmyAt(id, nid):
+					threat = true
+					break
+			if threat:
+				hot.erase(cap)
+				hot.push_front(cap)
+	var bfsOf = {}
+	phase.call("進軍:経路")
+	var bfsAt = {}
+	for a in list:
+		if not bfsAt.has(a.at): bfsAt[a.at] = bfsFrom(a.at, total(a.t), nid)
+		bfsOf[a.idx] = bfsAt[a.at]
+	phase.call("進軍:目標")
+	var obj = cpuObjective(nid, list, bfsOf)
+	phase.call("進軍:動かす")
+	var guardRate = clamp_f(P.guard + clamp_f(danger, 0, 1.6) * DIP.guardDanger, 0.2, 0.9)
+	if foes.size() and obj != null: guardRate = min(guardRate, 0.55)
+	var nDef = int(round(list.size() * guardRate))
+	if foes.size() and obj != null: nDef = min(nDef, max(0, list.size() - max(1, int(ceil(list.size() * 0.4)))))
+	var guard = {}
+	var freeA = list.duplicate()
+	for t in hot:
+		if guard.size() >= nDef: break
+		var taken = false
+		for x in armiesAt(t.id):
+			if guard.has(x.idx) and x.owner == nid:
+				taken = true
+				break
+		if taken: continue
+		var bestA = null
+		var bd = INF
+		for a in freeA:
+			var d = bget(bfsOf[a.idx], t.id)
+			if d == null: continue
+			if d < bd:
+				bd = d
+				bestA = a
+		if bestA != null:
+			guard[bestA.idx] = t.id
+			freeA.erase(bestA)
+	var order = list.duplicate()
+	order.sort_custom(func(x, y):
+		var sx = 0 if obj != null and x.at == obj.stage else 1
+		var sy = 0 if obj != null and y.at == obj.stage else 1
+		if sx != sy: return sx < sy
+		return total(x.t) > total(y.t))
+	var goal2 = goalT
+	for a in order:
+		if G.over != null: return
+		if na.armies[a.idx] != a: continue
+		if total(a.t) <= 0 or a.moved: continue
+		if a.get("siege") != null:
+			a.path = []
+			continue
+		var tot = total(a.t)
+		UI.actArmy = a
+		if not bfsOf.has(a.idx): bfsOf[a.idx] = bfsFrom(a.at, tot, nid)
+		var bsA: Dictionary = bfsOf[a.idx]
+		# どこへも行けない軍団は、同じ場所の味方に合流させる
+		if bsA.n <= 1:
+			var mate = null
+			for x in armiesAt(a.at):
+				if x != a and x.owner == nid and total(x.t) > 0 and bfsFrom(x.at, total(x.t) + tot, nid).n > 1:
+					mate = x
+					break
+			if mate != null:
+				for k in TK:
+					mate.t[k] += a.t[k]
+					a.t[k] = 0
+				if a.gen != null:
+					var g = genOf(na, a.gen)
+					if g != null: g.army = null
+				na.armies[a.idx] = null; ARMY_REV += 1
+				logMsg("%s %s を %s に合流させました" % [na.name, a.name, mate.name])
+				continue
+		# 損耗した軍団は下がって立て直す
+		if tot < goal2 * 0.3 and total(na.stock) > goal2 * 0.3:
+			var back = nearestOwnCity(a, bsA, nid)
+			if back != null and back != a.at:
+				var p = pathFrom(bsA, back)
+				if p != null and p.size():
+					a.path = p
+					await advanceArmy(a)
+					await cpuBeat(a)
+					continue
+		# 圧倒的な敵軍が隣に迫っていたら一歩下がる
+		if smartAI(nid) and not T(a.at).cap and T(a.at).owner == nid:
+			var foeA = []
+			for nb in roadNbrs(a.at):
+				for x in armiesAt(nb.to):
+					if x.owner != nid and atWar(nid, x.owner) and total(x.t) > 0: foeA.append(x)
+			if foeA.size():
+				var here = []
+				for x in armiesAt(a.at):
+					if x.owner == nid and total(x.t) > 0: here.append(x)
+				var thr = powerOf(foeA, T(a.at), false)
+				var dfp = powerOf(here, T(a.at), true)
+				if thr > dfp * 1.7:
+					var bt = null
+					var bsc = -INF
+					for nb in roadNbrs(a.at):
+						var u = T(nb.to)
+						if u.owner != nid: continue
+						var exposed = false
+						for nb2 in roadNbrs(nb.to):
+							if _foeArmyAt(nb2.to, nid):
+								exposed = true
+								break
+						if exposed: continue
+						var mineHere = 0.0
+						for x in armiesAt(nb.to):
+							if x.owner == nid: mineHere += total(x.t)
+						var sc: float = (30 if u.cap else 0) + (15 if u.type == "fort" else 0) + mineHere / 1000.0
+						if sc > bsc:
+							bsc = sc
+							bt = nb.to
+					if bt != null:
+						a.path = [bt]
+						await advanceArmy(a)
+						await cpuBeat(a)
+						continue
+		# 守備軍：持ち場を固める
+		if guard.has(a.idx):
+			var dst: int = guard[a.idx]
+			if a.at == dst:
+				a.path = []
+				a.wait = 0
+				continue
+			var p2 = pathFrom(bsA, dst)
+			if p2 != null and p2.size():
+				a.path = p2
+				await advanceArmy(a)
+				await cpuBeat(a)
+			continue
+		# 補充待ち
+		if T(a.at).owner == nid and tot < goal2 * 0.55 and total(na.stock) > 1000 and a.get("wait", 0) < 3:
+			a.wait = a.get("wait", 0) + 1
+			a.path = []
+			continue
+		# 隣に攻められる敵領地があれば取る
+		var mine = powerOf([a], T(a.at), false)
+		var best = null
+		var bestScore = -1.0
+		for nb in roadNbrs(a.at):
+			var t = T(nb.to)
+			if t.owner == nid or not atWar(nid, t.owner): continue
+			var gar = []
+			for x in armiesAt(nb.to):
+				if total(x.t) > 0: gar.append(x)
+			var help = []
+			for x in armiesAt(a.at):
+				if x != a and x.owner == nid and not x.moved and total(x.t) > 0: help.append(x)
+			var dp = powerOf(gar, t, true) if gar.size() else 0.0
+			var mineAll = powerOf([a] + help, T(a.at), false) if help.size() else mine
+			if mineAll >= dp * (P.atkTh + clamp_f(danger, 0, 1.5) * 0.25):
+				var sc: float = (40 if t.cap else 0) + t.dev * 6 + (-6 if t.type == "fort" else 4) \
+					- dp / max(1.0, mineAll) * 20 + (14 if isTopThreat(t.owner) else 0) \
+					+ (25 if obj != null and nb.to == obj.tid else 0) + (6 if t.get("trait") != null else 0) \
+					+ contig(t, nid) * 8 + reconnect(t, nid) * 12 - foeNbrs(t, nid) * 5 \
+					+ (stratBonus(nid, t) * 0.8 if smartAI(nid) else 0.0)
+				if sc > bestScore:
+					bestScore = sc
+					best = nb.to
+		if best != null:
+			a.wait = 0
+			a.path = [best]
+			await advanceArmy(a)
+			await cpuBeat(a)
+			continue
+		# 主目標へ：集結地に集まってから攻める
+		if obj != null:
+			if a.at == obj.stage:
+				var force = []
+				for x in armiesAt(a.at):
+					if x.owner == nid and not x.moved and total(x.t) > 0: force.append(x)
+				var gar2 = []
+				for x in armiesAt(obj.tid):
+					if total(x.t) > 0: gar2.append(x)
+				var dp2 = powerOf(gar2, T(obj.tid), true) if gar2.size() else 0.0
+				var pw = powerOf(force, T(a.at), false) if force.size() else 0.0
+				if force.has(a) and pw >= dp2 * P.atkTh:
+					a.wait = 0
+					a.path = [obj.tid]
+					await advanceArmy(a)
+					await cpuBeat(a)
+					continue
+				a.wait = a.get("wait", 0) + 1
+				if a.wait >= 4 and pw >= dp2 * 1.05:
+					a.wait = 0
+					a.path = [obj.tid]
+					await advanceArmy(a)
+					await cpuBeat(a)
+					continue
+				a.path = []
+				continue
+			var p3 = pathFrom(bsA, obj.stage)
+			if p3 != null and p3.size():
+				a.wait = 0
+				a.path = p3
+				await advanceArmy(a)
+				await cpuBeat(a)
+				continue
+		# 目標が無い／届かない：最寄りの敵拠点、なければ危ない国境へ
+		var dest = null
+		var bd2 = INF
+		for t in foeTerrs:
+			if t.owner == nid or not atWar(nid, t.owner): continue
+			var dd = bget(bsA, t.id)
+			if dd == null: continue
+			var d2v: float = dd - (2 if isTopThreat(t.owner) else 0)
+			if d2v < bd2:
+				bd2 = d2v
+				dest = t.id
+		if dest == null:
+			for t in frontier:
+				if not bhas(bsA, t.id): continue
+				var other = false
+				for x in armiesAt(t.id):
+					if x.owner == nid and x != a:
+						other = true
+						break
+				if other: continue
+				dest = t.id
+				break
+		if dest != null and dest != a.at:
+			var p4 = pathFrom(bsA, dest)
+			if p4 != null and p4.size():
+				a.path = p4
+				await advanceArmy(a)
+				await cpuBeat(a)
+	UI.actArmy = null
+	phase.call("")
+
+## CPUの一手ごとの演出。観戦中は「選んだ国」とその国の土地での戦いだけを見せる
+func cpuBeat(a) -> void:
+	if str(CFG.cpuStop) == "auto" or CFG.cpuDelay <= 0: return
+	var f = followNat()
+	if f == null or f < 0 or a == null: return
+	if a.owner != f and not (atWar(a.owner, f) and T(a.at).owner == f): return
+	if onScreenFn.is_valid() and not onScreenFn.call(T(a.at)): return
+	if BEAT_SPENT >= BEAT_MAX: return
+	refreshed.emit()
+	var d: int = min(CFG.cpuDelay, BEAT_MAX - BEAT_SPENT)
+	BEAT_SPENT += d
+	await sleep_ms(d)
+
+# ==================== k7_game.gd ====================
+# 起動・速さ・セーブ／ロード・表示の好み（元 7220〜7400・7608〜7780）
+
+signal game_started
+var auto_on = false
+
+func newGame(size: String) -> void:
+	resetColors()
+	G = genJapan() if size == "japan" else genMap(size)
+	G.observer = true
+	for t in G.terrs:
+		t.home = t.owner
+		t.homeCap = t.cap
+	G.factions = {}
+	G.ncol = NCOL.duplicate()
+	beginGame()
+func _resetCaches() -> void:
+	NBR = null; NBR_G = null; SEGN_DONE = null; COAST_G = null; HOP_G = null; ADJ_G = null
+	PW_KEY = ""; THR_KEY = ""; DG_KEY = ""; SUP_TERR_KEY = ""; SUP_DIRTY = true
+	FOCUS_CACHE = {}; SPROG_MEMO = {}; DIPQ = []
+func beginGame() -> void:
+	_resetCaches()
+	UI.sel = null; UI.selArmy = null; UI.selRoad = null; UI.busy = false; UI.auto = false; UI.selNat = null
+	auto_on = false
+	G.log = []
+	refreshSupply(true)
+	var names = []
+	for n in G.nations: names.append(n.name)
+	chron("%dつの国が並び立つ — %s" % [G.nations.size(), "、".join(names)], -1, "end")
+	for n in G.nations: chron("%s、%s に旗を立てる（%s）" % [n.name, T(n.capital).name, PERSONA[n.persona].n], n.id, "gov")
+	recordHistory()
+	logMsg("観戦モード：全%dか国をCPUが操作します" % G.nations.size(), "good")
+	logMsg("「自動進行」で連続再生、「戦闘表示」で戦闘画面の表示を切り替えられます")
+	game_started.emit()
+	refreshed.emit()
+
+## 自動進行（もう一度呼ぶと止まる）
+signal auto_changed(on: bool)
+func toggleAuto() -> void:
+	if G == null or G.over != null: return
+	auto_on = not auto_on
+	UI.auto = auto_on
+	auto_changed.emit(auto_on)
+	if not auto_on: return
+	while auto_on and G != null and G.over == null:
+		if UI.busy:
+			await sleep_ms(200)
+			continue
+		var t0 = Time.get_ticks_msec()
+		await endTurn()
+		await sleep_ms(max(40, CFG.autoTurnMs - (Time.get_ticks_msec() - t0)))
+	auto_on = false
+	UI.auto = false
+	auto_changed.emit(false)
+func stopAuto() -> void:
+	if auto_on:
+		auto_on = false
+		UI.auto = false
+		auto_changed.emit(false)
+
+# ---------- 速さ ----------
+const SPEEDS := [
+	{"n": "遅い", "auto": 1600, "cpu": 520, "phase": 700, "beat": 4500},
+	{"n": "普通", "auto": 700, "cpu": 340, "phase": 480, "beat": 2500},
+	{"n": "速い", "auto": 250, "cpu": 130, "phase": 160, "beat": 900},
+	{"n": "最速", "auto": 40, "cpu": 0, "phase": 0, "beat": 0},
+]
+func setSpeed(i: int, save := true) -> void:
+	i = int(clamp_f(i, 0, SPEEDS.size() - 1))
+	var s: Dictionary = SPEEDS[i]
+	CFG.autoTurnMs = s.auto; CFG.cpuDelay = s.cpu; CFG.phaseDelay = s.phase; BEAT_MAX = s.beat
+	UI.speed = i
+	if save: savePrefs()
+
+# ---------- 表示の好み（この端末だけ） ----------
+const PREF_PATH := "user://prefs.json"
+func loadPrefs() -> void:
+	var p = {}
+	if FileAccess.file_exists(PREF_PATH):
+		var v = JSON.parse_string(FileAccess.get_file_as_string(PREF_PATH))
+		if v is Dictionary: p = v
+	if p.get("battle") is bool: CFG.showCpuBattle = p.battle
+	if p.get("dip") is bool: CFG.showDip = p.dip
+	if p.get("log") is bool: UI.logOn = p.log
+	setSpeed(int(p.get("speed", 1)))
+func savePrefs() -> void:
+	var f = FileAccess.open(PREF_PATH, FileAccess.WRITE)
+	if f == null: return
+	f.store_string(JSON.stringify({"speed": UI.speed, "battle": CFG.showCpuBattle, "dip": CFG.showDip, "log": UI.logOn}))
+	f.close()
+
+# ---------- セーブ／ロード（3スロット） ----------
+func _slotPath(i: int) -> String: return "user://slot%d.sav" % i
+func _slotInfoPath(i: int) -> String: return "user://slot%d.json" % i
+func slotInfo(i: int):
+	if not FileAccess.file_exists(_slotInfoPath(i)) or not FileAccess.file_exists(_slotPath(i)): return null
+	var v = JSON.parse_string(FileAccess.get_file_as_string(_slotInfoPath(i)))
+	return v if v is Dictionary else null
+func _stripForSave(g: Dictionary) -> Dictionary:
+	var c: Dictionary = g.duplicate(true)
+	for na in c.nations: na.erase("supSet")
+	for t in c.terrs:
+		t.erase("segN"); t.erase("bb")
+		if c.size == "japan":
+			t.erase("segs"); t.erase("sn")
+	if c.size == "japan":
+		c.erase("edges"); c.erase("nb")
+	for na in c.nations:
+		for a in na.armies:
+			if a != null: a.erase("anim")
+	return c
+func saveSlot(i: int) -> bool:
+	if G == null: return false
+	var dt = Time.get_datetime_dict_from_system()
+	G.savedAt = "%02d/%02d %02d:%02d" % [dt.month, dt.day, dt.hour, dt.minute]
+	G.savedTs = Time.get_unix_time_from_system()
+	var f = FileAccess.open_compressed(_slotPath(i), FileAccess.WRITE, FileAccess.COMPRESSION_ZSTD)
+	if f == null: return false
+	f.store_var(_stripForSave(G))
+	f.close()
+	var alive = 0
+	for n in G.nations:
+		if n.alive: alive += 1
+	var inf = FileAccess.open(_slotInfoPath(i), FileAccess.WRITE)
+	inf.store_string(JSON.stringify({"turn": G.turn, "size": G.size, "nat": alive, "all": G.terrs.size(), "date": G.savedAt, "ts": G.savedTs}))
+	inf.close()
+	logMsg("スロット%d にセーブしました" % i, "good")
+	return true
+func loadSlot(i: int) -> bool:
+	if not FileAccess.file_exists(_slotPath(i)): return false
+	var f = FileAccess.open_compressed(_slotPath(i), FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
+	if f == null: return false
+	var g = f.get_var()
+	f.close()
+	if not (g is Dictionary): return false
+	if g.size == "japan":
+		var fm = FileAccess.open_compressed("res://data/jp/map%d.bin" % int(g.get("jpMap", 0)), FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
+		var m: Dictionary = fm.get_var()
+		fm.close()
+		for k in g.terrs.size():
+			g.terrs[k].segs = m.terrs[k].segs
+			g.terrs[k].sn = m.terrs[k].sn
+		g.edges = m.edges
+		g.nb = m.nb
+	resetColors(g.get("ncol", null))
+	stopAuto()
+	G = g
+	_resetCaches()
+	UI.sel = null; UI.selArmy = null; UI.selNat = null; UI.busy = false
+	refreshSupply(true)
+	game_started.emit()
+	refreshed.emit()
+	logMsg("スロット%d をロードしました" % i, "good")
+	return true
+func latestSlot() -> int:
+	var best = 0
+	var bt = -1.0
+	for i in [1, 2, 3]:
+		var s = slotInfo(i)
+		if s != null and float(s.get("ts", 1)) > bt:
+			bt = float(s.get("ts", 1))
+			best = i
+	return best
