@@ -4806,6 +4806,14 @@ func cpuTurn(nid: int) -> void:
 						await advanceArmy(a)
 						await cpuBeat(a)
 						continue
+		# 入るのに何ターンもかかる領地へ歩いている途中なら、そのまま進む（歩みを無駄にしない）
+		var pg = a.get("prog")
+		if pg != null and a.get("progN", 0) > 0 and edgeBetween(a.at, pg) != null and canEnter(nid, pg) and (T(pg).owner == nid or atWar(nid, T(pg).owner)) and not (smartAI(nid) and _overwhelmed(pg, nid, a)):
+			a.path = [pg]
+			a.why = "歩みを続ける"
+			await advanceArmy(a)
+			await cpuBeat(a)
+			continue
 		# 守備軍：持ち場を固める
 		if guard.has(a.idx):
 			var dst: int = guard[a.idx]
