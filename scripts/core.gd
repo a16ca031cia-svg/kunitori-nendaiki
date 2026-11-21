@@ -4422,6 +4422,17 @@ func _troopBldN(t: Dictionary) -> int:
 	for b in t.bld:
 		if TK.has(b): n += 1
 	return n
+## そこへ入ると、隣の敵に圧倒される（味方を足しても 1.7 倍以上の差）か
+func _overwhelmed(tid: int, nid: int, a) -> bool:
+	var foeA = []
+	for nb in roadNbrs(tid):
+		for x in armiesAt(nb.to):
+			if x.owner != nid and atWar(nid, x.owner) and total(x.t) > 0: foeA.append(x)
+	if foeA.is_empty(): return false
+	var here = [a]
+	for x in armiesAt(tid):
+		if x.owner == nid and x != a and total(x.t) > 0: here.append(x)
+	return powerOf(foeA, T(tid), false) > powerOf(here, T(tid), true) * 1.7
 func _foeArmyAt(tid: int, nid: int) -> bool:
 	for x in armiesAt(tid):
 		if x.owner != nid and atWar(nid, x.owner) and total(x.t) > 0: return true
@@ -4678,8 +4689,19 @@ func cpuTurn(nid: int) -> void:
 	if foes.size() and obj != null: nDef = min(nDef, max(0, list.size() - max(1, int(ceil(list.size() * 0.4)))))
 	var guard = {}
 	var freeA = list.duplicate()
+	var hotSet = {}
+	for t in hot: hotSet[t.id] = true
+	var postTaken = {}
+	for a in list:
+		if guard.size() >= nDef: break
+		var ps = a.get("post")
+		if ps != null and hotSet.has(ps) and not postTaken.has(ps) and bhas(bfsOf[a.idx], ps):
+			guard[a.idx] = ps
+			postTaken[ps] = true
+			freeA.erase(a)
 	for t in hot:
 		if guard.size() >= nDef: break
+		if postTaken.has(t.id): continue
 		var taken = false
 		for x in armiesAt(t.id):
 			if guard.has(x.idx) and x.owner == nid:
@@ -4696,6 +4718,8 @@ func cpuTurn(nid: int) -> void:
 				bestA = a
 		if bestA != null:
 			guard[bestA.idx] = t.id
+			bestA.post = t.id
+			postTaken[t.id] = true
 			freeA.erase(bestA)
 	var order = list.duplicate()
 	order.sort_custom(func(x, y):
@@ -4710,7 +4734,9 @@ func cpuTurn(nid: int) -> void:
 		if total(a.t) <= 0 or a.moved: continue
 		if a.get("siege") != null:
 			a.path = []
+			a.stay = "包囲"
 			continue
+		a.stay = "行き先なし"
 		var tot = total(a.t)
 		UI.actArmy = a
 		if not bfsOf.has(a.idx): bfsOf[a.idx] = bfsFrom(a.at, tot, nid)
@@ -4733,12 +4759,13 @@ func cpuTurn(nid: int) -> void:
 				logMsg("%s %s を %s に合流させました" % [na.name, a.name, mate.name])
 				continue
 		# 損耗した軍団は下がって立て直す
-		if tot < goal2 * 0.3 and total(na.stock) > goal2 * 0.3:
+		if tot < goal2 * 0.3 and total(na.stock) > goal2 * 0.3 and T(a.at).owner != nid:
 			var back = nearestOwnCity(a, bsA, nid)
 			if back != null and back != a.at:
 				var p = pathFrom(bsA, back)
 				if p != null and p.size():
 					a.path = p
+					a.why = "後退"
 					await advanceArmy(a)
 					await cpuBeat(a)
 					continue
@@ -4775,6 +4802,7 @@ func cpuTurn(nid: int) -> void:
 							bt = nb.to
 					if bt != null:
 						a.path = [bt]
+						a.why = "一歩下がる"
 						await advanceArmy(a)
 						await cpuBeat(a)
 						continue
@@ -4784,15 +4812,22 @@ func cpuTurn(nid: int) -> void:
 			if a.at == dst:
 				a.path = []
 				a.wait = 0
+				a.stay = "守備"
+				continue
+			if smartAI(nid) and _overwhelmed(dst, nid, a):
+				a.path = []
+				a.stay = "様子見"
 				continue
 			var p2 = pathFrom(bsA, dst)
 			if p2 != null and p2.size():
 				a.path = p2
+				a.why = "守備へ"
 				await advanceArmy(a)
 				await cpuBeat(a)
 			continue
 		# 補充待ち
 		if T(a.at).owner == nid and tot < goal2 * 0.55 and total(na.stock) > 1000 and a.get("wait", 0) < 3:
+			a.stay = "補充待ち"
 			a.wait = a.get("wait", 0) + 1
 			a.path = []
 			continue
@@ -4823,6 +4858,7 @@ func cpuTurn(nid: int) -> void:
 		if best != null:
 			a.wait = 0
 			a.path = [best]
+			a.why = "隣を攻める"
 			await advanceArmy(a)
 			await cpuBeat(a)
 			continue
@@ -4840,6 +4876,7 @@ func cpuTurn(nid: int) -> void:
 				if force.has(a) and pw >= dp2 * P.atkTh:
 					a.wait = 0
 					a.path = [obj.tid]
+					a.why = "目標を攻める"
 					await advanceArmy(a)
 					await cpuBeat(a)
 					continue
@@ -4847,15 +4884,22 @@ func cpuTurn(nid: int) -> void:
 				if a.wait >= 4 and pw >= dp2 * 1.05:
 					a.wait = 0
 					a.path = [obj.tid]
+					a.why = "目標を攻める"
 					await advanceArmy(a)
 					await cpuBeat(a)
 					continue
+				a.stay = "集結待ち"
 				a.path = []
+				continue
+			if smartAI(nid) and _overwhelmed(obj.stage, nid, a):
+				a.path = []
+				a.stay = "様子見"
 				continue
 			var p3 = pathFrom(bsA, obj.stage)
 			if p3 != null and p3.size():
 				a.wait = 0
 				a.path = p3
+				a.why = "集結地へ"
 				await advanceArmy(a)
 				await cpuBeat(a)
 				continue
@@ -4871,20 +4915,29 @@ func cpuTurn(nid: int) -> void:
 				bd2 = d2v
 				dest = t.id
 		if dest == null:
-			for t in frontier:
-				if not bhas(bsA, t.id): continue
-				var other = false
-				for x in armiesAt(t.id):
-					if x.owner == nid and x != a:
-						other = true
-						break
-				if other: continue
-				dest = t.id
-				break
+			var ps2 = a.get("post")
+			if ps2 != null and T(ps2).owner == nid and bhas(bsA, ps2):
+				dest = ps2
+			else:
+				var usedP = {}
+				for x in list:
+					if x != a and x.get("post") != null: usedP[x.post] = true
+				var bp = null
+				var bv = -INF
+				for t in frontier:
+					if usedP.has(t.id) or not bhas(bsA, t.id) or RK[t.id] <= 0: continue
+					var v: float = RK[t.id] * 10 - bget(bsA, t.id)
+					if v > bv:
+						bv = v
+						bp = t.id
+				if bp == null: bp = a.at if T(a.at).owner == nid else (na.capital if T(na.capital).owner == nid else a.at)
+				a.post = bp
+				dest = bp
 		if dest != null and dest != a.at:
 			var p4 = pathFrom(bsA, dest)
 			if p4 != null and p4.size():
 				a.path = p4
+				a.why = "敵地へ" if foes.size() else "持ち場へ"
 				await advanceArmy(a)
 				await cpuBeat(a)
 	UI.actArmy = null

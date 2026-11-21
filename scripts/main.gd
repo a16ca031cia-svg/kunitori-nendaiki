@@ -53,7 +53,7 @@ func _ready() -> void:
 		return
 	var ae = args.find("--armyeval")
 	if ae >= 0:
-		await _armyEval(int(args[ae + 1]), int(args[ae + 2]))
+		await _armyEval(int(args[ae + 1]), int(args[ae + 2]), int(args[ae + 3]) if args.size() > ae + 3 else 7000)
 		get_tree().quit()
 		return
 	var si = args.find("--sim")
@@ -1673,20 +1673,27 @@ func openFocus(nid: int) -> void:
 
 ## 軍の動きの評価（godot --headless -- --armyeval 回数 ターン数）：意味のない移動を数える
 ## 種（seed）は回ごとに固定。数値が小さいほど無駄が少ない（占領数は攻める力の目安）
-func _armyEval(runs: int, turns: int) -> void:
+func _armyEval(runs: int, turns: int, seedBase := 7000) -> void:
 	S.CFG.showDip = false
 	S.CFG.showCpuBattle = false
 	S.setSpeed(3, false)
-	var T0 = {"moves": 0, "peace": 0, "back": 0, "waste": 0, "idleWar": 0, "cap": 0, "warTurns": 0, "armyTurns": 0, "loop": 0}
+	var T0 = {"moves": 0, "peace": 0, "peaceOld": 0, "leave": 0, "back": 0, "waste": 0, "idleWar": 0, "cap": 0, "warTurns": 0, "armyTurns": 0, "loop": 0}
 	var capN = [0]
 	S.captured.connect(func(_t, _n, _o): capN[0] += 1)
 	for r in runs:
-		seed(7000 + r * 13)
+		seed(seedBase + r * 13)
 		S.newGame("japan")
 		capN[0] = 0
 		var H = {}      # 軍 → 直近の位置
 		var PR = {}     # 軍 → 前のターンに向かっていた領地（途中）
-		var R = {"moves": 0, "peace": 0, "back": 0, "waste": 0, "idleWar": 0, "warTurns": 0, "armyTurns": 0, "loop": 0}
+		var WHY = {}
+		var STAY = {}
+		var OLD = {}
+		var BACK = {}
+		var LW = {}
+		var PST = {}
+		var BORN = {}
+		var R = {"moves": 0, "peace": 0, "peaceOld": 0, "leave": 0, "back": 0, "waste": 0, "idleWar": 0, "warTurns": 0, "armyTurns": 0, "loop": 0}
 		for k in turns:
 			await S.endTurn()
 			if S.G.over != null: break
@@ -1700,32 +1707,62 @@ func _armyEval(runs: int, turns: int) -> void:
 				for a in na.armies:
 					if a == null or S.total(a.t) <= 0: continue
 					R.armyTurns += 1
+					var moved0: bool = a.get("lastAt", a.at) != a.at
+					if not moved0: a.why = "?"
+					a.lastAt = a.at
 					var key = "%d_%d_%s" % [na.id, a.idx, a.name]
+					if not BORN.has(key): BORN[key] = k
 					var h: Array = H.get(key, [])
 					var pos: int = a.at
 					if h.size() and h[-1] != pos:
 						R.moves += 1
-						if not war and not tense: R.peace += 1
-						if h.size() >= 2 and h[-2] == pos: R.back += 1
+						if not war and not tense:
+							R.peace += 1
+							var wy = str(a.get("why", "?"))
+							if not BORN.has(key): BORN[key] = k
+							wy += "（新）" if k - int(BORN[key]) <= 8 else "（古）"
+							if k - int(BORN[key]) > 8: R.peaceOld += 1
+							if k - int(BORN[key]) > 8:
+								var kind = "持ち場を離れる" if PST.get(key) == h[-1] else "持ち場へ戻る途中"
+								if PST.get(key) == h[-1]: R.leave += 1
+								OLD[kind + "：" + str(a.get("why", "?"))] = OLD.get(kind + "：" + str(a.get("why", "?")), 0) + 1
+							WHY[wy] = WHY.get(wy, 0) + 1
+						if h.size() >= 2 and h[-2] == pos:
+							R.back += 1
+							var bk = ("戦時：" if war else ("緊張：" if tense else "平時：")) + str(a.get("why", "?")) + "←" + str(LW.get(key, "?"))
+							BACK[bk] = BACK.get(bk, 0) + 1
 						if h.size() >= 4 and h.slice(-4).has(pos) and h[-2] != pos: R.loop += 1
 					elif war and h.size() >= 3 and h[-1] == pos and h[-2] == pos and h[-3] == pos and a.get("prog") == null and a.get("siege") == null:
 						# 戦争中に3ターン以上、目的もなく同じ所に居続ける（守備の持ち場は除く）
-						if not _atPost(a, na.id): R.idleWar += 1
+						if not _atPost(a, na.id) and str(a.get("stay", "")) != "守備":
+							R.idleWar += 1
+							var sy = str(a.get("stay", "?"))
+							STAY[sy] = STAY.get(sy, 0) + 1
 					var pg = a.get("prog")
 					var pp = PR.get(key)
 					if pp != null and pg != null and pg != pp: R.waste += 1
 					if pp != null and pg == null and pos != pp: R.waste += 1
 					PR[key] = pg
+					PST[key] = a.get("post")
+					if h.size() and h[-1] != pos: LW[key] = str(a.get("why", "?"))
 					h.append(pos)
 					if h.size() > 6: h.pop_front()
 					H[key] = h
 		print("run%d T%d 移動=%d 平時の移動=%d 行き戻り=%d 往復の輪=%d 途中で行き先変更=%d 戦時の棒立ち=%d 占領=%d 戦争の国ターン=%d 軍ターン=%d 宣戦=%d" % [r, S.G.turn, R.moves, R.peace, R.back, R.loop, R.waste, R.idleWar, capN[0], R.warTurns, R.armyTurns, S.G.get("declN", 0)])
+		print("  平時の移動の理由 ", WHY)
+		print("  戦時の棒立ちの理由 ", STAY)
+		print("  古い軍の平時の移動 ", OLD)
+		var bks = BACK.keys()
+		bks.sort_custom(func(x, y): return BACK[x] > BACK[y])
+		var bs = ""
+		for b in bks.slice(0, 12): bs += "%s=%d  " % [b, BACK[b]]
+		print("  行き戻りの理由（今←前） ", bs)
 		for k2 in R: T0[k2] = T0.get(k2, 0) + R[k2]
 		T0.cap += capN[0]
 	var at: float = max(1.0, T0.armyTurns)
 	var wt: float = max(1.0, T0.warTurns)
-	var score: float = (T0.peace * 2.0 + T0.back * 3.0 + T0.loop * 2.0 + T0.waste * 2.0 + T0.idleWar * 1.0) / at * 100.0
-	print("SUM 移動=%d 平時=%d 行き戻り=%d 輪=%d 変更=%d 棒立ち=%d 占領=%d 戦国ターン=%d 軍ターン=%d" % [T0.moves, T0.peace, T0.back, T0.loop, T0.waste, T0.idleWar, T0.cap, T0.warTurns, T0.armyTurns])
+	var score: float = (T0.leave * 2.0 + T0.back * 3.0 + T0.loop * 2.0 + T0.waste * 2.0 + T0.idleWar * 1.0) / at * 100.0
+	print("SUM 移動=%d 平時=%d 平時の古い軍=%d 持ち場を離れる=%d 行き戻り=%d 輪=%d 変更=%d 棒立ち=%d 占領=%d 戦国ターン=%d 軍ターン=%d" % [T0.moves, T0.peace, T0.peaceOld, T0.leave, T0.back, T0.loop, T0.waste, T0.idleWar, T0.cap, T0.warTurns, T0.armyTurns])
 	print("SCORE 無駄=%.2f（軍100ターンあたり・小さいほど良い） 占領/戦争100国ターン=%.1f" % [score, T0.cap / wt * 100.0])
 ## 守備の持ち場（国境の要所・首都）にいるか
 func _atPost(a, nid: int) -> bool:
