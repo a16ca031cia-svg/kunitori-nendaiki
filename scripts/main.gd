@@ -51,6 +51,11 @@ func _ready() -> void:
 		await _balance(int(args[bi + 1]), int(args[bi + 2]))
 		get_tree().quit()
 		return
+	var ae = args.find("--armyeval")
+	if ae >= 0:
+		await _armyEval(int(args[ae + 1]), int(args[ae + 2]))
+		get_tree().quit()
+		return
 	var si = args.find("--sim")
 	if si >= 0:
 		await _sim(args[si + 1] if args.size() > si + 1 else "small", int(args[si + 2]) if args.size() > si + 2 else 30)
@@ -209,6 +214,7 @@ func _buildUI() -> void:
 	pm.add_check_item("出来事の表示", 2)
 	pm.add_check_item("音楽", 6)
 	pm.add_check_item("効果音", 7)
+	pm.add_item("音量…", 8)
 	pm.add_separator()
 	pm.add_item("セーブ／ロード", 3)
 	pm.add_item("操作方法（?）", 4)
@@ -864,6 +870,7 @@ func _onMenu(id: int) -> void:
 			S.UI.bgm = not S.UI.get("bgm", true)
 			_updateBgm(true)
 		7: S.UI.sfx = not S.UI.get("sfx", true)
+		8: openVolume()
 		3: if S.G != null: openSave(false)
 		4: openHelp()
 		5:
@@ -1132,7 +1139,7 @@ func _onModalMeta(meta) -> void:
 # ---------- 外交の知らせ ----------
 func _showDip(ev: Dictionary) -> void:
 	var snd = "notice"
-	if ["war", "prep", "revolt", "join", "unally", "unpact", "surrender", "annex"].has(ev.kind): snd = "war"
+	if ["war", "surrender", "annex"].has(ev.kind): snd = "war"
 	elif ["peace", "ally", "renew", "pact", "trade", "faction"].has(ev.kind) and ev.ok: snd = "peace"
 	_sfx(snd, -4.0)
 	var K: Dictionary = S.DIP_KIND.get(ev.kind, S.DIP_KIND.war)
@@ -1393,6 +1400,12 @@ var _sfxLast = {}
 var _battleSfx = []
 func _setupAudio() -> void:
 	# 音の出典は audio/CREDITS.md（フリー素材）
+	for bn in ["BGM", "SFX"]:
+		if AudioServer.get_bus_index(bn) < 0:
+			AudioServer.add_bus()
+			AudioServer.set_bus_name(AudioServer.bus_count - 1, bn)
+			AudioServer.set_bus_send(AudioServer.bus_count - 1, "Master")
+	_applyVolume()
 	for k in ["peace", "war"]:
 		var st: AudioStreamOggVorbis = load("res://audio/bgm_%s.ogg" % k)
 		st.loop = true
@@ -1400,6 +1413,7 @@ func _setupAudio() -> void:
 	for i in 2:
 		var p = AudioStreamPlayer.new()
 		p.volume_db = -80.0
+		p.bus = "BGM"
 		add_child(p)
 		_bgmPlayers.append(p)
 	for k in ["click", "notice", "fall", "capture", "peace"]:
@@ -1409,8 +1423,53 @@ func _setupAudio() -> void:
 	_sfxStreams["battle"] = _battleSfx[0]
 	for i in 6:
 		var p = AudioStreamPlayer.new()
+		p.bus = "SFX"
 		add_child(p)
 		_sfxPlayers.append(p)
+## 音ごとの大きさの補正（宣戦の太鼓はほかより大きいので下げる）
+const SFX_TRIM = {"war": -15.0, "fall": -4.0, "battle": -3.0}
+## 音量つまみ（0〜100）を音の経路に反映
+func _applyVolume() -> void:
+	for pr in [["BGM", S.UI.get("bgmVol", 70)], ["SFX", S.UI.get("sfxVol", 60)]]:
+		var i = AudioServer.get_bus_index(pr[0])
+		if i < 0: continue
+		var v: float = clamp(float(pr[1]) / 100.0, 0.0, 1.0)
+		AudioServer.set_bus_mute(i, v <= 0.001)
+		AudioServer.set_bus_volume_db(i, linear_to_db(max(v, 0.001)))
+func openVolume() -> void:
+	var vb = VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 12)
+	for it in [["音楽", "bgmVol", 70], ["効果音", "sfxVol", 60]]:
+		var hb = HBoxContainer.new()
+		hb.add_theme_constant_override("separation", 10)
+		var l = Label.new()
+		l.text = it[0]
+		l.custom_minimum_size = Vector2(64, 0)
+		hb.add_child(l)
+		var sl = HSlider.new()
+		sl.min_value = 0
+		sl.max_value = 100
+		sl.step = 5
+		sl.value = S.UI.get(it[1], it[2])
+		sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		sl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		hb.add_child(sl)
+		var n = Label.new()
+		n.text = "%d" % int(sl.value)
+		n.custom_minimum_size = Vector2(36, 0)
+		hb.add_child(n)
+		var key: String = it[1]
+		sl.value_changed.connect(func(v):
+			S.UI[key] = int(v)
+			n.text = "%d" % int(v)
+			_applyVolume()
+			if key == "sfxVol": _sfx("notice", 0.0)
+			S.savePrefs())
+		vb.add_child(hb)
+	var note = _rtl()
+	note.text = "[font_size=12][color=#9b9484]0 にするとその音は鳴りません。メニューの「音楽」「効果音」でも入り切りできます。[/color][/font_size]"
+	vb.add_child(note)
+	modal("音量", vb, [_btn("閉じる", closeModal, true)], 420)
 ## 効果音（同じ音は短い間に重ねて鳴らさない）
 func _sfx(name: String, db := 0.0) -> void:
 	if not S.UI.get("sfx", true) or not _sfxStreams.has(name): return
@@ -1420,7 +1479,7 @@ func _sfx(name: String, db := 0.0) -> void:
 	var p: AudioStreamPlayer = _sfxPlayers[_sfxNext]
 	_sfxNext = (_sfxNext + 1) % _sfxPlayers.size()
 	p.stream = _battleSfx.pick_random() if name == "battle" else _sfxStreams[name]
-	p.volume_db = db
+	p.volume_db = db + SFX_TRIM.get(name, 0.0)
 	p.play()
 ## 選んだ国が戦争中（選んでいなければ世の中で戦が多い時）は戦の曲、それ以外は平時の曲。切り替えは重ねてゆっくり
 func _updateBgm(force := false) -> void:
@@ -1611,3 +1670,69 @@ func openFocus(nid: int) -> void:
 	vb.move_child(info, 1)
 	modal("%s%s の国家方針" % [na.name, ("（%s）" % na.role) if na.get("role", "") != "" else ""], vb, [_btn("閉じる", closeModal, true)], min(size.x - 24, ft.custom_minimum_size.x + 40))
 	_modalKey = "focus:%d" % nid
+
+## 軍の動きの評価（godot --headless -- --armyeval 回数 ターン数）：意味のない移動を数える
+## 種（seed）は回ごとに固定。数値が小さいほど無駄が少ない（占領数は攻める力の目安）
+func _armyEval(runs: int, turns: int) -> void:
+	S.CFG.showDip = false
+	S.CFG.showCpuBattle = false
+	S.setSpeed(3, false)
+	var T0 = {"moves": 0, "peace": 0, "back": 0, "waste": 0, "idleWar": 0, "cap": 0, "warTurns": 0, "armyTurns": 0, "loop": 0}
+	var capN = [0]
+	S.captured.connect(func(_t, _n, _o): capN[0] += 1)
+	for r in runs:
+		seed(7000 + r * 13)
+		S.newGame("japan")
+		capN[0] = 0
+		var H = {}      # 軍 → 直近の位置
+		var PR = {}     # 軍 → 前のターンに向かっていた領地（途中）
+		var R = {"moves": 0, "peace": 0, "back": 0, "waste": 0, "idleWar": 0, "warTurns": 0, "armyTurns": 0, "loop": 0}
+		for k in turns:
+			await S.endTurn()
+			if S.G.over != null: break
+			for na in S.G.nations:
+				if not na.alive: continue
+				var war: bool = S.inWar(na.id)
+				var tense := false
+				for o in S.G.nations:
+					if o.alive and o.id != na.id and S.isTense(na.id, o.id): tense = true
+				if war: R.warTurns += 1
+				for a in na.armies:
+					if a == null or S.total(a.t) <= 0: continue
+					R.armyTurns += 1
+					var key = "%d_%d_%s" % [na.id, a.idx, a.name]
+					var h: Array = H.get(key, [])
+					var pos: int = a.at
+					if h.size() and h[-1] != pos:
+						R.moves += 1
+						if not war and not tense: R.peace += 1
+						if h.size() >= 2 and h[-2] == pos: R.back += 1
+						if h.size() >= 4 and h.slice(-4).has(pos) and h[-2] != pos: R.loop += 1
+					elif war and h.size() >= 3 and h[-1] == pos and h[-2] == pos and h[-3] == pos and a.get("prog") == null and a.get("siege") == null:
+						# 戦争中に3ターン以上、目的もなく同じ所に居続ける（守備の持ち場は除く）
+						if not _atPost(a, na.id): R.idleWar += 1
+					var pg = a.get("prog")
+					var pp = PR.get(key)
+					if pp != null and pg != null and pg != pp: R.waste += 1
+					if pp != null and pg == null and pos != pp: R.waste += 1
+					PR[key] = pg
+					h.append(pos)
+					if h.size() > 6: h.pop_front()
+					H[key] = h
+		print("run%d T%d 移動=%d 平時の移動=%d 行き戻り=%d 往復の輪=%d 途中で行き先変更=%d 戦時の棒立ち=%d 占領=%d 戦争の国ターン=%d 軍ターン=%d 宣戦=%d" % [r, S.G.turn, R.moves, R.peace, R.back, R.loop, R.waste, R.idleWar, capN[0], R.warTurns, R.armyTurns, S.G.get("declN", 0)])
+		for k2 in R: T0[k2] = T0.get(k2, 0) + R[k2]
+		T0.cap += capN[0]
+	var at: float = max(1.0, T0.armyTurns)
+	var wt: float = max(1.0, T0.warTurns)
+	var score: float = (T0.peace * 2.0 + T0.back * 3.0 + T0.loop * 2.0 + T0.waste * 2.0 + T0.idleWar * 1.0) / at * 100.0
+	print("SUM 移動=%d 平時=%d 行き戻り=%d 輪=%d 変更=%d 棒立ち=%d 占領=%d 戦国ターン=%d 軍ターン=%d" % [T0.moves, T0.peace, T0.back, T0.loop, T0.waste, T0.idleWar, T0.cap, T0.warTurns, T0.armyTurns])
+	print("SCORE 無駄=%.2f（軍100ターンあたり・小さいほど良い） 占領/戦争100国ターン=%.1f" % [score, T0.cap / wt * 100.0])
+## 守備の持ち場（国境の要所・首都）にいるか
+func _atPost(a, nid: int) -> bool:
+	var t = S.T(a.at)
+	if t.owner != nid: return false
+	if t.cap: return true
+	for nb in S.roadNbrs(t.id):
+		var o: int = S.T(nb.to).owner
+		if o >= 0 and o != nid and S.atWar(nid, o): return true
+	return false

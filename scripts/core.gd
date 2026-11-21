@@ -1,4 +1,4 @@
-# 自動生成：core_src/*.gd をまとめたもの（直接編集しない。tools/build_core.sh か publish.ps1 で作り直す）
+# 自動生成：core_src/*.gd をまとめたもの（直接編集しない。tools/build_core.sh で作り直す）
 extends Node
 
 # ==================== k0_base.gd ====================
@@ -4991,11 +4991,13 @@ func loadPrefs() -> void:
 	if p.get("log") is bool: UI.logOn = p.log
 	UI.bgm = p.get("bgm", true) if p.get("bgm") is bool else true
 	UI.sfx = p.get("sfx", true) if p.get("sfx") is bool else true
+	UI.bgmVol = int(p.get("bgmVol", 70)) if (p.get("bgmVol") is float or p.get("bgmVol") is int) else 70
+	UI.sfxVol = int(p.get("sfxVol", 60)) if (p.get("sfxVol") is float or p.get("sfxVol") is int) else 60
 	setSpeed(int(p.get("speed", 1)))
 func savePrefs() -> void:
 	var f = FileAccess.open(PREF_PATH, FileAccess.WRITE)
 	if f == null: return
-	f.store_string(JSON.stringify({"speed": UI.speed, "battle": CFG.showCpuBattle, "dip": CFG.showDip, "log": UI.logOn, "bgm": UI.get("bgm", true), "sfx": UI.get("sfx", true)}))
+	f.store_string(JSON.stringify({"speed": UI.speed, "battle": CFG.showCpuBattle, "dip": CFG.showDip, "log": UI.logOn, "bgm": UI.get("bgm", true), "sfx": UI.get("sfx", true), "bgmVol": UI.get("bgmVol", 70), "sfxVol": UI.get("sfxVol", 60)}))
 	f.close()
 
 # ---------- セーブ／ロード（3スロット） ----------
