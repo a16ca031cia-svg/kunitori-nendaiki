@@ -1,8 +1,10 @@
 #!/bin/sh
 # 書き出した build/web に「一度読み込んだ大きなファイルをブラウザに保存して使い回す」仕組みを足す
-#  - sw.js（サービスワーカー）：エンジン本体・ゲームの中身・地図・曲を、中身の指紋（ハッシュ）つきで保存。
-#    指紋が同じなら保存した物を返し、ネットワークを使わない（公開をくり返しても、変わっていないエンジン本体は取り直さない）
-#  - index.html：エンジンを起動する前に、最新の sw.js が働き始めるのを待つ（最大3秒。だめなら今までどおり）
+#  - index.html：ファイルの指紋（ハッシュ）の一覧を持ち、起動の前にブラウザの保存領域（Cache Storage）へ書く。
+#    サービスワーカーがまだ無い初回だけ、働き始めるのを最大3秒待つ。起動の後、まだ保存していないファイルを裏で保存し、古い版の保存を消す
+#  - sw.js：ページが書いた一覧の指紋で保存を探し、あればそれを返す（ネットワークを使わない）。
+#    無ければネットワークから受け取りながらすぐ返し、保存は裏で行う（待たせない＝新しい版への切り替えも止めない）
+# 公開をくり返しても、中身の変わっていないファイル（エンジン本体など）は取り直さない
 cd "$(dirname "$0")/../build/web" || exit 1
 FILES="index.js index.wasm index.pck index.png index.icon.png jpmap0.bin jpmap1.bin jpmap2.bin jpmap3.bin bgm_peace.ogg bgm_war.ogg index.audio.worklet.js index.audio.position.worklet.js"
 MAN=""
@@ -11,47 +13,38 @@ for f in $FILES; do
 	h=$(sha1sum "$f" | cut -c1-16)
 	MAN="$MAN\"$f\":\"$h\","
 done
-VER=$(printf '%s' "$MAN" | sha1sum | cut -c1-12)
-cat > sw.js <<EOF
+MAN="{${MAN%,}}"
+cat > sw.js <<'EOF'
 // 自動生成（tools/add_sw.sh）：大きなファイルを中身の指紋つきでブラウザに保存して使い回す
-const VER = "$VER";
-const FILES = {${MAN%,}};
 const STORE = "kunitori-files";
 self.addEventListener("install", (e) => self.skipWaiting());
-self.addEventListener("activate", (e) => e.waitUntil((async () => {
-	await self.clients.claim();
-	// いまの指紋に合わない古い保存は消す
-	const c = await caches.open(STORE);
-	for (const req of await c.keys()) {
-		const u = new URL(req.url);
-		const name = u.pathname.split("/").pop();
-		if (FILES[name] !== u.searchParams.get("h")) await c.delete(req);
-	}
-})()));
+self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
 self.addEventListener("fetch", (e) => {
 	if (e.request.method !== "GET") return;
 	const u = new URL(e.request.url);
-	if (u.origin !== self.location.origin) return;
+	if (u.origin !== self.location.origin || u.searchParams.has("h")) return;
 	const name = u.pathname.split("/").pop();
-	const h = FILES[name];
-	if (!h) return;
+	if (!name || name === "sw.js" || name.endsWith(".html")) return;
 	e.respondWith((async () => {
 		const c = await caches.open(STORE);
+		const mr = await c.match("kunitori-manifest");
+		const man = mr ? await mr.json() : null;
+		const h = man && man[name];
+		if (!h) return fetch(e.request);
 		const key = new URL(name + "?h=" + h, self.registration.scope).href;
 		const hit = await c.match(key);
 		if (hit) return hit;
-		// 指紋つきの URL で取りに行く（ブラウザの古い一時保存を使わないように）
 		const r = await fetch(key, { cache: "no-store" });
-		if (r.ok) await c.put(key, r.clone());
+		if (r.ok) c.put(key, r.clone()).catch(() => {});
 		return r;
 	})());
 });
 EOF
-# index.html：エンジンの起動の前に sw.js を待つ（すでに足してあれば何もしない）
-if ! grep -q "kunitoriSwReady" index.html; then
-	perl -0pi -e 's/(const engine = new Engine\(GODOT_CONFIG\);\n)/$1\n\/\/ 大きなファイルをブラウザに保存して使い回す（tools\/add_sw.sh）。最新の sw.js が働き始めるまで最大3秒待つ\nfunction kunitoriSwReady() {\n\tif (!("serviceWorker" in navigator) || location.protocol === "file:") return Promise.resolve();\n\treturn new Promise((resolve) => {\n\t\tconst done = () => resolve();\n\t\tsetTimeout(done, 3000);\n\t\tconst ver = "__SWVER__";\n\t\tconst cur = navigator.serviceWorker.controller;\n\t\tif (cur && cur.scriptURL.endsWith("sw.js?v=" + ver)) { done(); return; }\n\t\tnavigator.serviceWorker.addEventListener("controllerchange", done, { once: true });\n\t\tnavigator.serviceWorker.register("sw.js?v=" + ver).catch(done);\n\t});\n}\n/' index.html
-	perl -0pi -e 's/\t\tsetStatusMode\(\x27progress\x27\);\n\t\tengine\.startGame\(\{/\t\tsetStatusMode(\x27progress\x27);\n\t\tkunitoriSwReady().then(() => engine.startGame({/; s/(\t\t\tsetStatusMode\(\x27hidden\x27\);\n\t\t\}, displayFailureNotice)\);/$1));/' index.html
+# index.html：一覧を書き、必要なら初回だけサービスワーカーを待ってから起動する（まだ足していなければ足す）
+if ! grep -q "kunitoriPrep" index.html; then
+	perl -0pi -e 's/(const engine = new Engine\(GODOT_CONFIG\);\n)/$1\n\/\/ 大きなファイルをブラウザに保存して使い回す（tools\/add_sw.sh）\nconst KUNITORI_FILES = __KMAN__;\nasync function kunitoriPrep() {\n\ttry {\n\t\tif (!("caches" in window) || !("serviceWorker" in navigator) || location.protocol === "file:") return;\n\t\tconst c = await caches.open("kunitori-files");\n\t\tawait c.put("kunitori-manifest", new Response(JSON.stringify(KUNITORI_FILES)));\n\t\tlet first = !navigator.serviceWorker.controller;\n\t\tfor (const r of await navigator.serviceWorker.getRegistrations()) { const w = r.active || r.waiting || r.installing; if (w && w.scriptURL.indexOf("sw.js?v=") >= 0) { await r.unregister(); first = true; } }\n\t\tconst reg = navigator.serviceWorker.register("sw.js").catch(() => null);\n\t\tif (first) await Promise.race([new Promise((r) => navigator.serviceWorker.addEventListener("controllerchange", r, { once: true })), new Promise((r) => setTimeout(r, 3000))]);\n\t} catch (e) {}\n}\n\/\/ 起動の後：まだ保存していないファイルを裏で保存し、古い版の保存を消す\nasync function kunitoriFill() {\n\ttry {\n\t\tif (!("caches" in window)) return;\n\t\tawait new Promise((r) => setTimeout(r, 15000));\n\t\tconst c = await caches.open("kunitori-files");\n\t\tconst want = {};\n\t\tfor (const [n, h] of Object.entries(KUNITORI_FILES)) want[new URL(n + "?h=" + h, location.href).href] = true;\n\t\tfor (const req of await c.keys()) if (!want[req.url] && !req.url.endsWith("kunitori-manifest")) await c.delete(req);\n\t\tfor (const k of Object.keys(want)) {\n\t\t\tif (await c.match(k)) continue;\n\t\t\tconst r = await fetch(k, { cache: "no-store" });\n\t\t\tif (r.ok) await c.put(k, r);\n\t\t}\n\t} catch (e) {}\n}\n/' index.html
+	perl -0pi -e 's/\t\tsetStatusMode\(\x27progress\x27\);\n\t\tengine\.startGame\(\{/\t\tsetStatusMode(\x27progress\x27);\n\t\tkunitoriPrep().then(() => engine.startGame({/; s/(\t\t\tsetStatusMode\(\x27hidden\x27\);\n)(\t\t\}, displayFailureNotice)\);/$1\t\t\tkunitoriFill();\n$2));/' index.html
 fi
-perl -pi -e 's/sw\.js\?v=[0-9a-f_A-Z]+/sw.js?v='"$VER"'/g; s/const ver = "[^"]*";/const ver = "'"$VER"'";/' index.html
-grep -c "kunitoriSwReady" index.html
-echo "sw.js を作りました（版 $VER）"
+perl -0pi -e 's/const KUNITORI_FILES = [^;]*;/const KUNITORI_FILES = '"$MAN"';/' index.html
+grep -c "kunitoriPrep\|kunitoriFill" index.html
+echo "sw.js と一覧を作りました"
