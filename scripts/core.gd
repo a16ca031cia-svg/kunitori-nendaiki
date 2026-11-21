@@ -1,4 +1,4 @@
-# 自動生成：core_src/*.gd をまとめたもの（直接編集しない。tools/build_core.sh か publish.ps1 で作り直す）
+# 自動生成：core_src/*.gd をまとめたもの（直接編集しない。tools/build_core.sh で作り直す）
 extends Node
 
 # ==================== k0_base.gd ====================
@@ -1428,6 +1428,8 @@ func autoBattle(A: Array, D: Array, t: Dictionary) -> String:
 ## 戦闘画面：観戦中は選んだ国の戦いだけ見せる（UI が battle_finish を呼ぶまで待つ）
 signal battle_show(A: Array, D: Array, t: Dictionary)
 signal battle_done(res: String)
+var BATTLE_SPENT = 0
+var BATTLE_N = 0
 func runBattle(atts: Array, defs: Array, t: Dictionary):
 	refreshSupply()
 	var A = []
@@ -1435,6 +1437,9 @@ func runBattle(atts: Array, defs: Array, t: Dictionary):
 		if a != null and total(a.t) > 0: A.append(a)
 	var lead = A[0]
 	var watch: bool = CFG.showCpuBattle and UI.speed != 3 and (concerns([lead.owner, defs[0].owner]) or UI.get("watchAll", false)) and battle_show.get_connections().size() > 0
+	# 自動進行中は、戦闘画面を見せる時間を1ターンあたりの上限で区切る（ターンが長く止まらないように）
+	if watch and UI.get("auto", false) and BATTLE_SPENT + BEAT_SPENT + 1500 > BEAT_MAX: watch = false
+	var _bt0 = Time.get_ticks_msec()
 	if not watch or str(CFG.cpuStop) == "auto":
 		var r = autoBattle(A, defs, t)
 		logWar("%sの戦い：%s" % [t.name, (NAT(lead.owner).name + " が勝利") if r == "A" else (NAT(defs[0].owner).name + " が防衛")], [lead.owner, defs[0].owner], "war")
@@ -1442,6 +1447,8 @@ func runBattle(atts: Array, defs: Array, t: Dictionary):
 	UI.busy = true
 	battle_show.emit(A, defs, t)
 	var res = await battle_done
+	BATTLE_SPENT += Time.get_ticks_msec() - _bt0
+	BATTLE_N += 1
 	UI.busy = false
 	return res
 ## 戦闘画面の終わり（UI から呼ぶ）
@@ -3969,8 +3976,23 @@ func _tp(l: String) -> void:
 	if _TPL != "": PROF["dip:" + _TPL] = PROF.get("dip:" + _TPL, 0) + now - _TPT
 	_TPT = now
 	_TPL = l
+## 計算が長く続いたら画面に順番を譲る（1コマを短く保つ）
+var SEGLOG = false
+var SEGS = {}
+var FRAME_MS = 25
+func yieldMaybe() -> void:
+	var seg = Time.get_ticks_msec() - YIELD_AT
+	if SEGLOG and seg > 40 and seg < 1000:
+		var st = get_stack()
+		var k = "%s:%d" % [st[1].function, st[1].line] if st.size() > 1 else "?"
+		SEGS[k] = SEGS.get(k, []) + [seg]
+	if Time.get_ticks_msec() - YIELD_AT > FRAME_MS:
+		await get_tree().process_frame
+		YIELD_AT = Time.get_ticks_msec()
 func endTurn() -> void:
 	BEAT_SPENT = 0
+	BATTLE_SPENT = 0
+	BATTLE_N = 0
 	if UI.busy or G == null or G.over != null: return
 	UI.busy = true
 	var _t0 = Time.get_ticks_msec()
@@ -3986,7 +4008,7 @@ func endTurn() -> void:
 			PROF["n:pw"] = PROF.get("n:pw", 0) + 1000
 			await sleep_ms(pw)
 			YIELD_AT = Time.get_ticks_msec()
-		elif Time.get_ticks_msec() - YIELD_AT > 120:
+		elif Time.get_ticks_msec() - YIELD_AT > FRAME_MS:
 			PROF["n:y0"] = PROF.get("n:y0", 0) + 1000
 			await sleep_ms(0)
 			YIELD_AT = Time.get_ticks_msec()
@@ -4000,8 +4022,11 @@ func endTurn() -> void:
 	UI.actArmy = null
 	await flushDip()
 	var _t1 = Time.get_ticks_msec()
-	production()
+	await yieldMaybe()
+	await production()
+	await yieldMaybe()
 	settleTurn()
+	await yieldMaybe()
 	for na in G.nations:
 		for a in na.armies:
 			if a != null: a.moved = false
@@ -4011,10 +4036,13 @@ func endTurn() -> void:
 	for a in nn:
 		for b2 in nn:
 			if a != b2 and G.dip.score[a][b2]: G.dip.score[a][b2] *= WAR.decay
+	await yieldMaybe()
 	dipTurn()
+	await yieldMaybe()
 	decayThreat()
 	checkMilestones()
 	recordHistory()
+	await yieldMaybe()
 	refreshSupply(true)
 	G.turn += 1
 	G.log.append({"s": "第 %d ターン" % G.turn, "cls": "sep", "t": G.turn})
@@ -4038,6 +4066,7 @@ func production() -> void:
 			ownBy[t.owner].append(t)
 	for na in G.nations:
 		if not na.alive: continue
+		await yieldMaybe()
 		var own: Array = ownBy.get(na.id, [])
 		var war = inWar(na.id)
 		var starve = isStarving(na)
@@ -4459,11 +4488,13 @@ func cpuTurn(nid: int) -> void:
 	hoiTurn(nid)
 	cpuPolicy(nid, P)
 	phase.call("外交")
+	await yieldMaybe()
 	cpuDiplomacy(nid)
 	_tp("")
 	await flushDip()
 	if not na.alive: return
 	phase.call("内政")
+	await yieldMaybe()
 	cpuSettle(nid)
 	# --- 内政：建物 ---
 	var mk = 0
@@ -4596,6 +4627,7 @@ func cpuTurn(nid: int) -> void:
 		mkGen(G, na, randomPts())
 	# --- 軍団編成 ---
 	phase.call("軍団の編成・補充")
+	await yieldMaybe()
 	var maxA = int(clamp_f(2 + own.size() / 3 + P.army * 2, 1, ARMY_MAX))
 	var stockTot = total(na.stock)
 	var goalT: float = clamp_f(3500 + own.size() * 700, 3500, 34000) * P.goal
@@ -4620,6 +4652,7 @@ func cpuTurn(nid: int) -> void:
 		for k in TK: a.target[k] = int(round(goalT * P.mix[k]))
 		if T(a.at).owner == nid: reinforce(a)
 	phase.call("進軍")
+	await yieldMaybe()
 	# ============ 進軍：守りを固め、主目標に兵を集めて攻める ============
 	var list = []
 	for x in na.armies:
@@ -4676,13 +4709,23 @@ func cpuTurn(nid: int) -> void:
 				hot.push_front(cap)
 	var bfsOf = {}
 	phase.call("進軍:経路")
+	await yieldMaybe()
 	var bfsAt = {}
-	for a in list:
-		if not bfsAt.has(a.at): bfsAt[a.at] = bfsFrom(a.at, total(a.t), nid)
-		bfsOf[a.idx] = bfsAt[a.at]
+	# 経路（行ける範囲）は要る軍の分だけ計算する。戦争中は目標選びに全軍分が要る
+	var getB = func(a):
+		if not bfsOf.has(a.idx):
+			if not bfsAt.has(a.at): bfsAt[a.at] = bfsFrom(a.at, total(a.t), nid)
+			bfsOf[a.idx] = bfsAt[a.at]
+		return bfsOf[a.idx]
+	if foes.size():
+		for a in list:
+			getB.call(a)
+			await yieldMaybe()
 	phase.call("進軍:目標")
+	await yieldMaybe()
 	var obj = cpuObjective(nid, list, bfsOf)
 	phase.call("進軍:動かす")
+	await yieldMaybe()
 	var guardRate = clamp_f(P.guard + clamp_f(danger, 0, 1.6) * DIP.guardDanger, 0.2, 0.9)
 	if foes.size() and obj != null: guardRate = min(guardRate, 0.55)
 	var nDef = int(round(list.size() * guardRate))
@@ -4695,7 +4738,7 @@ func cpuTurn(nid: int) -> void:
 	for a in list:
 		if guard.size() >= nDef: break
 		var ps = a.get("post")
-		if ps != null and hotSet.has(ps) and not postTaken.has(ps) and bhas(bfsOf[a.idx], ps):
+		if ps != null and hotSet.has(ps) and not postTaken.has(ps) and (a.at == ps or bhas(getB.call(a), ps)):
 			guard[a.idx] = ps
 			postTaken[ps] = true
 			freeA.erase(a)
@@ -4711,7 +4754,7 @@ func cpuTurn(nid: int) -> void:
 		var bestA = null
 		var bd = INF
 		for a in freeA:
-			var d = bget(bfsOf[a.idx], t.id)
+			var d = bget(getB.call(a), t.id)
 			if d == null: continue
 			if d < bd:
 				bd = d
@@ -4730,6 +4773,7 @@ func cpuTurn(nid: int) -> void:
 	var goal2 = goalT
 	for a in order:
 		if G.over != null: return
+		await yieldMaybe()
 		if na.armies[a.idx] != a: continue
 		if total(a.t) <= 0 or a.moved: continue
 		if a.get("siege") != null:
@@ -4739,8 +4783,12 @@ func cpuTurn(nid: int) -> void:
 		a.stay = "行き先なし"
 		var tot = total(a.t)
 		UI.actArmy = a
-		if not bfsOf.has(a.idx): bfsOf[a.idx] = bfsFrom(a.at, tot, nid)
-		var bsA: Dictionary = bfsOf[a.idx]
+		# 平時に持ち場にいる軍はそのまま（経路の計算も省く）
+		if foes.is_empty() and T(a.at).owner == nid and guard.get(a.idx, a.get("post")) == a.at:
+			a.path = []
+			a.stay = "守備"
+			continue
+		var bsA: Dictionary = getB.call(a)
 		# どこへも行けない軍団は、同じ場所の味方に合流させる
 		if bsA.n <= 1:
 			var mate = null
@@ -4979,9 +5027,9 @@ func cpuBeat(a) -> void:
 	if f == null or f < 0 or a == null: return
 	if a.owner != f and not (atWar(a.owner, f) and T(a.at).owner == f): return
 	if onScreenFn.is_valid() and not onScreenFn.call(T(a.at)): return
-	if BEAT_SPENT >= BEAT_MAX: return
+	if BEAT_SPENT + BATTLE_SPENT >= BEAT_MAX: return
 	beat.emit()
-	var d: int = min(CFG.cpuDelay, BEAT_MAX - BEAT_SPENT)
+	var d: int = min(CFG.cpuDelay, BEAT_MAX - BEAT_SPENT - BATTLE_SPENT)
 	BEAT_SPENT += d
 	await sleep_ms(d)
 

@@ -120,16 +120,32 @@ func _ready() -> void:
 	labelL = Control.new()
 	labelL.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	labelL.set_anchors_preset(Control.PRESET_FULL_RECT)
-	labelL.draw.connect(_drawLabels)
+	labelL.draw.connect(_timed(_drawLabels))
 	add_child(labelL)
 	resized.connect(func():
 		if (_fitPending or not _userMoved) and size.x >= 50 and size.y >= 50 and S.G != null: fitView()
 		else: _applyView())
 	S.map_changed.connect(_onMapChanged)
 	S.fx.connect(_onFx)
+var DRAWT = {}
+var DRAW_LOG = false
+func _timed(fn: Callable) -> Callable:
+	return func():
+		if not DRAW_LOG:
+			fn.call()
+			return
+		var t0 = Time.get_ticks_usec()
+		fn.call()
+		var ms = (Time.get_ticks_usec() - t0) / 1000.0
+		var k = fn.get_method()
+		var r = DRAWT.get(k, [0, 0.0, 0.0])
+		r[0] += 1
+		r[1] = max(r[1], ms)
+		r[2] += ms
+		DRAWT[k] = r
 func _layer(parent: Node, fn: Callable) -> Node2D:
 	var n = Node2D.new()
-	n.draw.connect(fn)
+	n.draw.connect(_timed(fn))
 	parent.add_child(n)
 	return n
 
@@ -350,21 +366,25 @@ func _onMapChanged(kind: String, _arg) -> void:
 	_dirtyOwn = true
 var _dirtyOwn = true
 var _lastBorderScale = -1.0
+## ターン終わりの描き直しは、1コマに1〜2層ずつに分ける（1コマが長く止まらないように）
+var _redrawQ = []
 func refreshAll() -> void:
 	if S.G == null: return
 	kick()
-	if S.G != G_: setup()
+	if S.G != G_:
+		setup()
+		_redrawQ = []
+	var q = []
 	if _dirtyOwn:
 		_dirtyOwn = false
 		_updateColors()
-		terrL.queue_redraw()
-		borderL.queue_redraw()
-	siteL.queue_redraw()
-	markL.queue_redraw()
-	relL.queue_redraw()
-	selL.queue_redraw()
+		q.append([terrL, borderL])
+	q.append([siteL, markL])
+	q.append([relL, selL])
+	q.append([labelL])
+	for grp in q:
+		if not _redrawQ.has(grp): _redrawQ.append(grp)
 	armyL.queue_redraw()
-	labelL.queue_redraw()
 	fxL.queue_redraw()
 ## 軍団が一手動いた時の軽い描き直し（土地の持ち主が変わった時だけ地図の塗りと国境も）
 func beatRefresh() -> void:
@@ -560,23 +580,46 @@ func _drawSeaRoutes() -> void:
 	b.flush(seaRouteL.get_canvas_item())
 
 # ---------- 状態で変わる層 ----------
+## 境目の線（滑らかにして、線分の組にしたもの）は形が変わらないので使い回す
+var _segPairs = {}
+var _segPairsG = null
+func _pairsOf(t: Dictionary, i: int) -> PackedVector2Array:
+	if _segPairsG != S.G:
+		_segPairsG = S.G
+		_segPairs = {}
+	var k: int = t.id * 64 + i
+	var pr = _segPairs.get(k)
+	if pr != null: return pr
+	var ln = _smooth(t.segs[i])
+	pr = PackedVector2Array()
+	for q in ln.size() - 1:
+		pr.append(ln[q])
+		pr.append(ln[q + 1])
+	_segPairs[k] = pr
+	return pr
 func _drawBorders() -> void:
 	if S.G == null: return
 	var w: float = max(3.4, 1.3 / vs)
-	var under = Batch.new()
-	var over = Batch.new()
+	var P := PackedVector2Array()
+	var C := PackedColorArray()
+	var ncol := {}
 	for t in S.G.terrs:
 		if t.owner < 0: continue
-		var c = Color(S.NAT(t.owner).color)
+		var c = ncol.get(t.owner)
+		if c == null:
+			c = Color(S.NAT(t.owner).color)
+			ncol[t.owner] = c
 		for i in t.segs.size():
 			var j: int = t.segN[i]
 			if j >= 0 and S.T(j).owner == t.owner: continue
 			if j < 0 and isJapan: continue
-			var ln = _smooth(t.segs[i])
-			under.polyline(ln, w * 2.05, Color(0.14, 0.11, 0.06, 0.42))
-			over.polyline(ln, w, c)
-	under.flush(borderL.get_canvas_item())
-	over.flush(borderL.get_canvas_item())
+			var pr := _pairsOf(t, i)
+			P.append_array(pr)
+			for q in pr.size() / 2: C.append(c)
+	if P.is_empty(): return
+	var ci = borderL.get_canvas_item()
+	RenderingServer.canvas_item_add_multiline(ci, P, PackedColorArray([Color(0.14, 0.11, 0.06, 0.42)]), w * 2.05)
+	RenderingServer.canvas_item_add_multiline(ci, P, C, w)
 	_lastBorderScale = vs
 ## 国ごとの国境の線（持ち主が変わるまで使い回す。全領地を1回だけ見る）
 var _nbKey = ""
@@ -646,12 +689,26 @@ func _drawSel() -> void:
 		b.polyline(c, 4.5 / vs, Color("#3a2f14"))
 		b.polyline(c, 2.4 / vs, Color("#f0cf55"))
 	b.flush(selL.get_canvas_item())
+var _siteSig = PackedByteArray()
+var _siteB = null
+var _siteG = null
 func _drawSites() -> void:
 	if S.G == null: return
 	var lod: bool = vs < 0.25 and S.G.terrs.size() > 800
 	glyphL.visible = not lod
 	if lod: return
+	# 拠点の見た目（混乱・首都・インフラ・開発度）が変わっていなければ前の形をそのまま使う
+	var sig := PackedByteArray()
+	sig.resize(S.G.terrs.size())
+	for t in S.G.terrs:
+		sig[t.id] = (1 if t.chaos > 0 else 0) | (2 if t.cap else 0) | (int(t.get("infra", 1)) << 2) | (int(t.dev) << 4) | (128 if t.type == "city" else 0)
+	if _siteB != null and sig == _siteSig and _siteG == S.G:
+		_siteB.flush(siteL.get_canvas_item())
+		return
+	_siteSig = sig
+	_siteG = S.G
 	var b = Batch.new()
+	_siteB = b
 	for t in S.G.terrs:
 		var p = Vector2(t.x, t.y)
 		var city: bool = t.type == "city"
@@ -864,6 +921,9 @@ func _onFx(kind: String, arg) -> void:
 var _animLive = false
 func _process(_d: float) -> void:
 	if S.G != null and _animLive: _animStep()
+	if _redrawQ.size():
+		for n in _redrawQ.pop_front(): n.queue_redraw()
+		_kickReq = true
 	if _kickReq:
 		_kickReq = false
 		sv.render_target_update_mode = SubViewport.UPDATE_ONCE

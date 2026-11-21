@@ -84,6 +84,11 @@ func _ready() -> void:
 	_showTitle()
 	if args.has("--autostart"): _newGame("japan")
 	if OS.has_feature("web"): _debugHash()
+	var pc = args.find("--pace")
+	if pc >= 0:
+		AudioServer.set_bus_mute(0, true)
+		await _pace(int(args[pc + 1]), int(args[pc + 2]), int(args[pc + 3]), int(args[pc + 4]) if args.size() > pc + 4 else 5000)
+		get_tree().quit()
 
 # ============================================================
 #   見た目（テーマ）
@@ -434,12 +439,19 @@ func _onStarted() -> void:
 # ============================================================
 func refresh() -> void:
 	if S.G == null: return
+	var _rt0 = Time.get_ticks_usec()
+	var _rp = [_rt0]
 	if S.UI.selNat != null and not S.NAT(S.UI.selNat).alive: S.UI.selNat = null
 	_syncNatPick()
 	_renderTop()
+	_rp.append(Time.get_ticks_usec())
 	_renderSide()
+	_rp.append(Time.get_ticks_usec())
 	_renderLog()
+	_rp.append(Time.get_ticks_usec())
 	map.refreshAll()
+	_rp.append(Time.get_ticks_usec())
+	_uiT("refresh:上", _rp[1] - _rp[0]); _uiT("refresh:右の欄", _rp[2] - _rp[1]); _uiT("refresh:記録", _rp[3] - _rp[2]); _uiT("refresh:地図", _rp[4] - _rp[3])
 	btnEnd.disabled = S.UI.busy or S.auto_on
 	_updateBgm()
 func _col(c) -> String: return c.to_html(false) if c is Color else String(c).trim_prefix("#")
@@ -503,6 +515,7 @@ func _renderLog() -> void:
 		out.append("[font_size=11][color=#9b9484]%dT[/color][/font_size] %s" % [l.get("t", 0), _cs(_esc(l.s), c)])
 	logBox.text = "\n".join(out)
 func _setPhase(nid, sub: String) -> void:
+	_paceLbl = ("%s:%s" % [S.NAT(nid).name, sub]) if nid != null else "ターン終わり"
 	if nid == null:
 		phaseBox.visible = false
 		return
@@ -532,6 +545,41 @@ func _toast(msg: String, cls: String) -> void:
 		toastBox.reset_size()
 		toastBox.position.x = (toastBox.get_parent().size.x - toastBox.size.x) / 2
 
+## 外交の知らせのカード（自動進行中）：右上に重ねて出し、数秒で消える
+var dipCards: VBoxContainer = null
+func _dipCard(ev: Dictionary, K: Dictionary, A: Dictionary, B: Dictionary) -> void:
+	if dipCards == null or not is_instance_valid(dipCards):
+		dipCards = VBoxContainer.new()
+		dipCards.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		dipCards.add_theme_constant_override("separation", 6)
+		dipCards.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+		dipCards.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+		dipCards.offset_left = -300
+		dipCards.offset_right = -10
+		dipCards.offset_top = 54
+		toastBox.get_parent().add_child(dipCards)
+	var p = PanelContainer.new()
+	var sb = _sb(Color(C_PANEL, 0.94), Color(K.col), 1, 3, 8)
+	sb.border_width_left = 4
+	p.add_theme_stylebox_override("panel", sb)
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.custom_minimum_size = Vector2(290, 0)
+	var l = _rtl()
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var s = "[font_size=11][color=%s]%s%s[/color]　[color=#9b9484]第%dターン[/color][/font_size]
+" % [K.col, K.n, "（不調）" if not ev.ok else "", ev.turn]
+	s += "[b]%s[/b] [color=%s]→[/color] [b]%s[/b]
+" % [_cs(_esc(A.name), _rd(A.color)), K.col, _cs(_esc(B.name), _rd(B.color))]
+	s += "[font_size=12]%s[/font_size]" % _esc(S.dipResultText(ev))
+	l.text = s
+	p.add_child(l)
+	dipCards.add_child(p)
+	while dipCards.get_child_count() > 4: dipCards.get_child(0).free()
+	var stay: float = [7.0, 5.0, 3.0, 1.6][clamp(S.UI.speed, 0, 3)]
+	var tw = create_tween()
+	tw.tween_interval(stay)
+	tw.tween_property(p, "modulate:a", 0.0, 0.4)
+	tw.tween_callback(p.queue_free)
 # ---------- 国を選ぶ ----------
 var _natPickKey = ""
 const REG := [["北海道・東北", 0, 6], ["関東", 7, 13], ["中部", 14, 22], ["近畿", 23, 29], ["中国", 30, 34], ["四国", 35, 38], ["九州・沖縄", 39, 46]]
@@ -1145,6 +1193,12 @@ func _showDip(ev: Dictionary) -> void:
 	var K: Dictionary = S.DIP_KIND.get(ev.kind, S.DIP_KIND.war)
 	var A = S.NAT(ev.from)
 	var B = S.NAT(ev.to)
+	# 自動進行中は止める窓ではなく、地図の上の知らせのカードにしてターンを進める
+	if S.auto_on:
+		_dipCard(ev, K, A, B)
+		await get_tree().process_frame
+		S.dip_closed.emit()
+		return
 	var st: String = S.relState(ev.from, ev.to)
 	var s = "[center][font=res://fonts/ShipporiMinchoB1-SemiBold.ttf][font_size=18]%s  [color=%s]→[/color]  %s[/font_size][/font]\n[font_size=11][color=#9b9484]%s　　%s[/color][/font_size][/center]\n" % [
 		_cs(_esc(A.name), _rd(A.color)), K.col, _cs(_esc(B.name), _rd(B.color)), S.PERSONA[A.persona].n, S.PERSONA[B.persona].n]
@@ -1163,11 +1217,29 @@ func _showDip(ev: Dictionary) -> void:
 	if S.DIPQ.size(): foot.append(_bodyText("[font_size=11][color=#9b9484]ほかに %d 件[/color][/font_size]" % S.DIPQ.size()))
 	foot.append(_btn("以後は表示しない", func(): S.CFG.showDip = false; S.DIPQ = []; S.savePrefs(); _syncMenu(); fin.call()))
 	foot.append(_btn("OK", fin, true))
+	var cd = _bodyText("")
+	foot.push_front(cd)
 	modal(K.n + ("（不調）" if not ev.ok else "") + "　第%dターン" % ev.turn, _bodyText(s), foot, 460, false)
 	_modalKey = fin
+	# 自動進行中は、速さに応じた秒数で自動的に閉じる（ターンを止めない）
+	var wait_s: float = [4.0, 2.5, 1.2, 0.4][clamp(S.UI.speed, 0, 3)]
+	var t0 = Time.get_ticks_msec()
+	while not done[0]:
+		if S.auto_on:
+			var left: float = wait_s - (Time.get_ticks_msec() - t0) / 1000.0
+			if left <= 0:
+				fin.call()
+				break
+			if is_instance_valid(cd): cd.text = "[font_size=11][color=#9b9484]自動で閉じます（%.0f秒）[/color][/font_size]" % ceil(left)
+		else:
+			t0 = Time.get_ticks_msec()
+			if is_instance_valid(cd): cd.text = ""
+		await get_tree().create_timer(0.1).timeout
 
 # ---------- 戦闘画面（観戦） ----------
 func _showBattle(A: Array, D: Array, t: Dictionary) -> void:
+	_battleOpen = true
+	S.battle_done.connect(func(_r): _battleOpen = false, CONNECT_ONE_SHOT)
 	_sfx("battle", -4.0)
 	var st0 = [S.sumTroops(A), S.sumTroops(D)]
 	var body = _rtl()
@@ -1200,7 +1272,7 @@ func _showBattle(A: Array, D: Array, t: Dictionary) -> void:
 		var res: String = S.battleFinish(A, D, kind)
 		logs.append("[color=#e6c95a]%s[/color]" % ("攻撃側の勝利" if res == "A" else "防衛側が守り抜いた"))
 		paint.call()
-		await get_tree().create_timer(1.1).timeout
+		await get_tree().create_timer(0.5 if S.auto_on else 1.1).timeout
 		closeModal()
 		refresh()
 		S.battle_done.emit(res)
@@ -1222,9 +1294,15 @@ func _showBattle(A: Array, D: Array, t: Dictionary) -> void:
 		_btn("以後は表示しない", func(): S.CFG.showCpuBattle = false; S.savePrefs(); _syncMenu(); rush.call())], 720, false)
 	_modalKey = rush
 	paint.call()
+	var capMs: int = [3500, 2000, 1000, 0][clamp(S.UI.speed, 0, 3)]
+	var bt0 = Time.get_ticks_msec()
 	while not done[0]:
 		await get_tree().create_timer(0.07).timeout
 		if done[0]: break
+		# 自動進行中は表示の時間に上限（残りは一気に決着）
+		if S.auto_on and Time.get_ticks_msec() - bt0 > capMs:
+			rush.call()
+			break
 		for i in speed[0]:
 			var r = S.battleTick(A, D, t)
 			if r == null: break
@@ -1302,6 +1380,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 #   画面なしでターンを回して確かめる（godot --headless -- --sim japan 30）
 # ============================================================
 func _sim(size_: String, turns: int) -> void:
+	seed(int(OS.get_environment("KN_SEED")) if OS.get_environment("KN_SEED") != "" else 4242)
 	S.CFG.showDip = false
 	S.CFG.showCpuBattle = false
 	S.setSpeed(3)
@@ -1314,6 +1393,7 @@ func _sim(size_: String, turns: int) -> void:
 		var alive = 0
 		for n in S.G.nations:
 			if n.alive: alive += 1
+		SIMT += Time.get_ticks_msec() - t1
 		print("turn ", S.G.turn, " alive=", alive, " wars=", S.G.wars.size(), " wild=", S.wildCount(), " ms=", Time.get_ticks_msec() - t1)
 		if S.G.over != null:
 			print("over winner=", S.G.winner)
@@ -1334,6 +1414,7 @@ func _sim(size_: String, turns: int) -> void:
 		gold += n.gold
 		if S.lordOf(n.id) != null: vass += 1
 	for t in S.G.terrs: pop += t.pop
+	print("SIMTOTAL ms=", SIMT)
 	print("STATS alive=", alive2, " wars=", S.G.wars.size(), " vass=", vass, " pol=", pol, " troopsAvg=", troops / alive2, " foodAvg=", food / alive2, " goldAvg=", gold / alive2, " pop=", pop)
 	for c in S.G.chron.slice(-15): print("  ", c.t, " ", c.s)
 	var ks = S.PROF.keys()
@@ -1383,9 +1464,11 @@ func _debugHash() -> void:
 ## 軍団が一手動いた時：上の帯・出来事・地図の動く層だけ描き直す（右の欄は作り直さない）
 func _onBeat() -> void:
 	if S.G == null: return
+	var _b0 = Time.get_ticks_usec()
 	_renderTop()
 	_renderLog()
 	map.beatRefresh()
+	_uiT("beat", Time.get_ticks_usec() - _b0)
 
 # ============================================================
 #   音（BGM・効果音）：すべて tools/gen_audio.gd で合成したもの
@@ -1775,3 +1858,86 @@ func _atPost(a, nid: int) -> bool:
 		var o: int = S.T(nb.to).owner
 		if o >= 0 and o != nid and S.atWar(nid, o): return true
 	return false
+
+## 動作の安定性の評価（godot --headless -- --pace ターン数 速さ 選ぶ国 種）
+## 自動進行を実際の待ち時間ごと動かし、ターンの長さのばらつきと画面の止まり（1コマの長さ）を測る
+var _paceOn = false
+var _paceMaxGap = 0.0
+var _paceGaps = []
+var _paceLastUs = 0
+var LONGF = []
+var _paceLbl = ""
+var _battleOpen = false
+func _process(_delta: float) -> void:
+	if not _paceOn: return
+	var now = Time.get_ticks_usec()
+	if _paceLastUs > 0:
+		var g = (now - _paceLastUs) / 1000.0
+		_paceGaps.append(g)
+		if g > 100.0: LONGF.append("%.0fms 場面=%s 戦闘=%s 窓=%s" % [g, _paceLbl, str(_battleOpen), str(_modal != null)])
+		_paceMaxGap = max(_paceMaxGap, g)
+	_paceLastUs = now
+func _pace(turns: int, speed: int, sel: int, sd: int) -> void:
+	seed(sd)
+	S.CFG.showDip = true
+	S.CFG.showCpuBattle = true
+	S.setSpeed(speed, false)
+	_newGame("japan")
+	await get_tree().process_frame
+	selectNation(sel, false)
+	var durs = []
+	var gapsPerTurn = []
+	var stamps = [Time.get_ticks_msec()]
+	_paceOn = true
+	_paceLastUs = 0
+	map.DRAW_LOG = true
+	S.SEGLOG = true
+	var cb = func():
+		stamps.append(Time.get_ticks_msec())
+		var dd = stamps[-1] - stamps[-2]
+		if dd > 2500: print("  長いターン T%d %dms 演出=%d 戦闘画面=%d 戦闘の数=%d" % [S.G.turn, dd, S.BEAT_SPENT, S.BATTLE_SPENT, S.BATTLE_N])
+		gapsPerTurn.append(_paceMaxGap)
+		_paceMaxGap = 0.0
+	S.turn_ended.connect(cb)
+	S.toggleAuto()
+	while stamps.size() <= turns and S.G.over == null:
+		await get_tree().process_frame
+	S.stopAuto()
+	_paceOn = false
+	S.turn_ended.disconnect(cb)
+	for i in range(1, stamps.size()): durs.append(stamps[i] - stamps[i - 1])
+	var mean = 0.0
+	for d in durs: mean += d
+	mean /= max(1, durs.size())
+	var v = 0.0
+	for d in durs: v += (d - mean) * (d - mean)
+	var sdv = sqrt(v / max(1, durs.size()))
+	var sorted = durs.duplicate()
+	sorted.sort()
+	var g2 = _paceGaps.duplicate()
+	g2.sort()
+	var p95 = g2[int(g2.size() * 0.95)] if g2.size() else 0.0
+	var p99 = g2[int(g2.size() * 0.99)] if g2.size() else 0.0
+	var long = 0
+	for g in g2:
+		if g > 100.0: long += 1
+	print("PACE 速さ=%s 国=%s ターン=%d 平均=%dms ばらつき(変動係数)=%.2f 最短=%d 最長=%d 1コマ p95=%.0fms p99=%.0fms 最長=%.0fms 100ms超=%d回" % [S.SPEEDS[speed].n, S.NAT(sel).name, durs.size(), int(mean), sdv / max(1.0, mean), sorted[0], sorted[-1], p95, p99, g2[-1] if g2.size() else 0.0, long])
+	print("  画面の描き直し（回数・最長ms・30ms超） ", UIT)
+	for k in S.SEGS: print("  長い区間 ", k, " ", S.SEGS[k])
+	var dk = map.DRAWT.keys()
+	dk.sort_custom(func(x, y): return map.DRAWT[x][2] > map.DRAWT[y][2])
+	for k in dk: print("  地図の層 %s 回数=%d 最長=%.0fms 合計=%.0fms" % [k, map.DRAWT[k][0], map.DRAWT[k][1], map.DRAWT[k][2]])
+	for l in LONGF.slice(0, 25): print("  長いコマ ", l)
+	var s = "  ターンごと(ms): "
+	for d in durs: s += "%d " % d
+	print(s)
+## 画面の描き直しにかかった時間（安定性の評価用）
+var UIT = {}
+func _uiT(k: String, us: int) -> void:
+	if not _paceOn: return
+	var r = UIT.get(k, [0, 0, 0])
+	r[0] += 1
+	r[1] = max(r[1], us / 1000)
+	if us > 30000: r[2] += 1
+	UIT[k] = r
+var SIMT = 0

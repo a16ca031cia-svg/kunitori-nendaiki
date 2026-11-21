@@ -660,6 +660,8 @@ func autoBattle(A: Array, D: Array, t: Dictionary) -> String:
 ## 戦闘画面：観戦中は選んだ国の戦いだけ見せる（UI が battle_finish を呼ぶまで待つ）
 signal battle_show(A: Array, D: Array, t: Dictionary)
 signal battle_done(res: String)
+var BATTLE_SPENT := 0
+var BATTLE_N := 0
 func runBattle(atts: Array, defs: Array, t: Dictionary):
 	refreshSupply()
 	var A := []
@@ -667,6 +669,9 @@ func runBattle(atts: Array, defs: Array, t: Dictionary):
 		if a != null and total(a.t) > 0: A.append(a)
 	var lead = A[0]
 	var watch: bool = CFG.showCpuBattle and UI.speed != 3 and (concerns([lead.owner, defs[0].owner]) or UI.get("watchAll", false)) and battle_show.get_connections().size() > 0
+	# 自動進行中は、戦闘画面を見せる時間を1ターンあたりの上限で区切る（ターンが長く止まらないように）
+	if watch and UI.get("auto", false) and BATTLE_SPENT + BEAT_SPENT + 1500 > BEAT_MAX: watch = false
+	var _bt0 := Time.get_ticks_msec()
 	if not watch or str(CFG.cpuStop) == "auto":
 		var r := autoBattle(A, defs, t)
 		logWar("%sの戦い：%s" % [t.name, (NAT(lead.owner).name + " が勝利") if r == "A" else (NAT(defs[0].owner).name + " が防衛")], [lead.owner, defs[0].owner], "war")
@@ -674,6 +679,8 @@ func runBattle(atts: Array, defs: Array, t: Dictionary):
 	UI.busy = true
 	battle_show.emit(A, defs, t)
 	var res = await battle_done
+	BATTLE_SPENT += Time.get_ticks_msec() - _bt0
+	BATTLE_N += 1
 	UI.busy = false
 	return res
 ## 戦闘画面の終わり（UI から呼ぶ）
