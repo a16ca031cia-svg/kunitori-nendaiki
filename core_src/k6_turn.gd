@@ -877,6 +877,27 @@ func cpuTurn(nid: int) -> void:
 		if guard.has(a.idx):
 			var dst: int = guard[a.idx]
 			if a.at == dst:
+				# 最前線の守備軍：隣の敵領地が空か、こちらが2倍以上強ければ取って前に出る（持ち場も移す）
+				var grab = null
+				if smartAI(nid):
+					var myP := powerOf([a], T(a.at), false)
+					for nb in roadNbrs(a.at):
+						var tg := T(nb.to)
+						if tg.owner == nid or tg.owner < 0 or not atWar(nid, tg.owner) or not canEnter(nid, nb.to): continue
+						var g3 := []
+						for x in armiesAt(nb.to):
+							if total(x.t) > 0: g3.append(x)
+						var dp3 := powerOf(g3, tg, true) if g3.size() else 0.0
+						if myP > 0 and myP >= dp3 * 2.0 and not _overwhelmed(nb.to, nid, a):
+							grab = nb.to
+							break
+				if grab != null:
+					a.path = [grab]
+					a.why = "守備から前進"
+					a.post = grab
+					await advanceArmy(a)
+					await cpuBeat(a)
+					continue
 				a.path = []
 				a.wait = 0
 				a.stay = "守備"
