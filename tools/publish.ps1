@@ -30,6 +30,7 @@ New-Item -ItemType Directory -Force build\web | Out-Null
 & $godot --headless --path . --export-release Web build/web/index.html 2>&1 | Select-String -Pattern "ERROR|SCRIPT ERROR" | ForEach-Object { Write-Host $_ }
 if (-not (Test-Path build\web\index.pck)) { throw "書き出しに失敗しました" }
 Copy-Item audio\bgm_war.ogg, audio\bgm_peace.ogg build\web\   # 曲は起動後に読み込む（書き出しに含めない）
+foreach ($i in 0..3) { Copy-Item "data\jp\map$i.bin" "build\web\jpmap$i.bin" }   # 日本地図も使う時に取ってくる
 Write-Host "Web 版を書き出しました"
 
 # 3) ソース

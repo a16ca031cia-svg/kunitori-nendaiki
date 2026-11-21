@@ -145,7 +145,7 @@ func loadSlot(i: int) -> bool:
 	f.close()
 	if not (g is Dictionary): return false
 	if g.size == "japan":
-		var fm := FileAccess.open_compressed("res://data/jp/map%d.bin" % int(g.get("jpMap", 0)), FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
+		var fm := FileAccess.open_compressed(jpMapPath(int(g.get("jpMap", 0))), FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
 		var m: Dictionary = fm.get_var()
 		fm.close()
 		for k in g.terrs.size():
@@ -176,3 +176,19 @@ func latestSlot() -> int:
 			bt = float(s.get("ts", 1))
 			best = i
 	return best
+
+## 起動の時間の記録（URL に #boottime を付けた時だけ、ブラウザのコンソールに出す）
+func _enter_tree() -> void: bootMark("土台のスクリプトが動き始めた")
+func bootMark(what: String) -> void:
+	if OS.get_environment("KN_FAKEWEB") != "": print("BOOT ", Time.get_ticks_msec(), "ms ", what)
+	if not OS.has_feature("web"): return
+	JavaScriptBridge.eval("if (location.hash.indexOf('boottime') >= 0) console.log('BOOT ' + Math.round(performance.now()) + 'ms %s')" % what.replace("'", ""), true)
+## セーブが使う日本地図の番号（日本地図でなければ -1）
+func slotJpMap(i: int) -> int:
+	if not FileAccess.file_exists(_slotPath(i)): return -1
+	var f := FileAccess.open_compressed(_slotPath(i), FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
+	if f == null: return -1
+	var g = f.get_var()
+	f.close()
+	if not (g is Dictionary) or g.get("size") != "japan": return -1
+	return int(g.get("jpMap", 0))

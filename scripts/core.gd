@@ -698,9 +698,16 @@ func genMap(size: String) -> Dictionary:
 	return g
 
 ## 日本地図：元の JS で作った初期状態（4種類）から1つ選び、国の性格などはここで振り直す
+## 日本地図の初期状態のファイル（ブラウザ版は書き出しに含めず、使う時に取ってきて user:// に置く）
+var NEXT_JP_MAP = -1
+func jpMapPath(i: int) -> String:
+	var r = "res://data/jp/map%d.bin" % i
+	if FileAccess.file_exists(r) and OS.get_environment("KN_FAKEWEB") == "": return r
+	return "user://jpmap%d.bin" % i
 func genJapan(which := -1) -> Dictionary:
-	if which < 0: which = randi() % 4
-	var f = FileAccess.open_compressed("res://data/jp/map%d.bin" % which, FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
+	if which < 0: which = NEXT_JP_MAP if NEXT_JP_MAP >= 0 else randi() % 4
+	NEXT_JP_MAP = -1
+	var f = FileAccess.open_compressed(jpMapPath(which), FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
 	var m: Dictionary = f.get_var()
 	f.close()
 	var terrs: Array = m.terrs
@@ -5213,7 +5220,7 @@ func loadSlot(i: int) -> bool:
 	f.close()
 	if not (g is Dictionary): return false
 	if g.size == "japan":
-		var fm = FileAccess.open_compressed("res://data/jp/map%d.bin" % int(g.get("jpMap", 0)), FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
+		var fm = FileAccess.open_compressed(jpMapPath(int(g.get("jpMap", 0))), FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
 		var m: Dictionary = fm.get_var()
 		fm.close()
 		for k in g.terrs.size():
@@ -5244,6 +5251,22 @@ func latestSlot() -> int:
 			bt = float(s.get("ts", 1))
 			best = i
 	return best
+
+## 起動の時間の記録（URL に #boottime を付けた時だけ、ブラウザのコンソールに出す）
+func _enter_tree() -> void: bootMark("土台のスクリプトが動き始めた")
+func bootMark(what: String) -> void:
+	if OS.get_environment("KN_FAKEWEB") != "": print("BOOT ", Time.get_ticks_msec(), "ms ", what)
+	if not OS.has_feature("web"): return
+	JavaScriptBridge.eval("if (location.hash.indexOf('boottime') >= 0) console.log('BOOT ' + Math.round(performance.now()) + 'ms %s')" % what.replace("'", ""), true)
+## セーブが使う日本地図の番号（日本地図でなければ -1）
+func slotJpMap(i: int) -> int:
+	if not FileAccess.file_exists(_slotPath(i)): return -1
+	var f = FileAccess.open_compressed(_slotPath(i), FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
+	if f == null: return -1
+	var g = f.get_var()
+	f.close()
+	if not (g is Dictionary) or g.get("size") != "japan": return -1
+	return int(g.get("jpMap", 0))
 
 # ==================== k8_hoi.gd ====================
 # HOI4を参考にした仕組み：政体・安定度・戦争支持・政治力・国民精神・工場と軍需品・国家方針

@@ -477,9 +477,16 @@ func genMap(size: String) -> Dictionary:
 	return g
 
 ## 日本地図：元の JS で作った初期状態（4種類）から1つ選び、国の性格などはここで振り直す
+## 日本地図の初期状態のファイル（ブラウザ版は書き出しに含めず、使う時に取ってきて user:// に置く）
+var NEXT_JP_MAP := -1
+func jpMapPath(i: int) -> String:
+	var r := "res://data/jp/map%d.bin" % i
+	if FileAccess.file_exists(r) and OS.get_environment("KN_FAKEWEB") == "": return r
+	return "user://jpmap%d.bin" % i
 func genJapan(which := -1) -> Dictionary:
-	if which < 0: which = randi() % 4
-	var f := FileAccess.open_compressed("res://data/jp/map%d.bin" % which, FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
+	if which < 0: which = NEXT_JP_MAP if NEXT_JP_MAP >= 0 else randi() % 4
+	NEXT_JP_MAP = -1
+	var f := FileAccess.open_compressed(jpMapPath(which), FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
 	var m: Dictionary = f.get_var()
 	f.close()
 	var terrs: Array = m.terrs

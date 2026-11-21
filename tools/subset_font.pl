@@ -133,6 +133,9 @@ $out{glyf} = $ng;
 $out{loca} = $nloca;
 $out{head} = $head;
 delete $out{DSIG};
+# 縦書き用の表は使わないので外し、post は字形の名前を持たない形（3.0）にする
+delete $out{vhea}; delete $out{vmtx};
+if (exists $out{post}) { my $p = substr($out{post}, 0, 32); substr($p, 0, 4) = pack("N", 0x00030000); $out{post} = $p; }
 my @tags = sort keys %out;
 
 sub csum {

@@ -44,6 +44,7 @@ var chronNation = -1
 var statSort = "pw"
 
 func _ready() -> void:
+	S.bootMark("画面のスクリプトが動き始めた")
 	var args = OS.get_cmdline_user_args()
 	var bi = args.find("--balance")
 	if bi >= 0:
@@ -62,7 +63,9 @@ func _ready() -> void:
 		get_tree().quit()
 		return
 	_buildTheme()
+	S.bootMark("フォントと見た目の準備ができた")
 	_buildUI()
+	S.bootMark("画面の部品ができた")
 	S.loadPrefs()
 	_syncMenu()
 	spdPick.select(S.UI.speed)
@@ -82,6 +85,11 @@ func _ready() -> void:
 	S.nations_changed.connect(func(): _natPickKey = "")
 	S.onScreenFn = func(t): return map.onScreen(t)
 	_showTitle()
+	S.bootMark("タイトル画面ができた")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	S.bootMark("タイトル画面が描かれた")
+	_prefetchJpMaps()
 	if args.has("--autostart"): _newGame("japan")
 	if OS.has_feature("web"): _debugHash()
 	var pc = args.find("--pace")
@@ -425,10 +433,52 @@ func _hideTitle() -> void:
 func _newGame(size_: String) -> void:
 	var _ng0 = Time.get_ticks_msec()
 	if OS.get_environment("KN_STARTUP") != "": S.game_started.connect(func(): print("STARTUP 新しいゲーム（ゲームの計算）", Time.get_ticks_msec() - _ng0, "ms"), CONNECT_ONE_SHOT)
+	if size_ == "japan":
+		var w = randi() % 4
+		S.bootMark("新しいゲーム：地図%d を確かめる" % w)
+		if not await _ensureJpMap(w): return
+		S.NEXT_JP_MAP = w
+	S.bootMark("新しいゲームを始める")
 	S.newGame(size_)
 func _loadSlot(i: int) -> void:
 	closeModal()
+	var w = S.slotJpMap(i)
+	if w >= 0 and not await _ensureJpMap(w): return
 	if not S.loadSlot(i): _toast("読み込めませんでした", "err")
+## 日本地図の初期状態（ブラウザ版は書き出しに含めず、ページの隣の jpmapN.bin を取ってきて user:// に残す）
+var _jpFetching = {}
+func _ensureJpMap(i: int) -> bool:
+	if FileAccess.file_exists(S.jpMapPath(i)): return true
+	if not OS.has_feature("web") and OS.get_environment("KN_FAKEWEB") == "": return false
+	_toast("地図を読み込んでいます…", "")
+	var ok = await _fetchJpMap(i)
+	if not ok: _toast("地図を読み込めませんでした。通信を確かめてください", "err")
+	return ok
+func _fetchJpMap(i: int) -> bool:
+	while _jpFetching.get(i, false): await get_tree().process_frame
+	if FileAccess.file_exists(S.jpMapPath(i)): return true
+	_jpFetching[i] = true
+	var href = str(JavaScriptBridge.eval("location.href.split('#')[0].split('?')[0]", true)) if OS.has_feature("web") else OS.get_environment("KN_FAKEWEB")
+	var req = HTTPRequest.new()
+	add_child(req)
+	var tmp = "user://jpmap%d.part" % i
+	req.download_file = tmp
+	req.request(href.substr(0, href.rfind("/") + 1) + "jpmap%d.bin" % i)
+	var res = await req.request_completed
+	req.queue_free()
+	_jpFetching[i] = false
+	S.bootMark("地図%d 取得 結果=%d コード=%d" % [i, res[0], res[1]])
+	if res[0] != HTTPRequest.RESULT_SUCCESS or res[1] != 200:
+		DirAccess.remove_absolute(tmp)
+		return false
+	var rn = DirAccess.rename_absolute(tmp, "user://jpmap%d.bin" % i)
+	S.bootMark("地図%d 名前の付け替え=%d あるか=%s" % [i, rn, str(FileAccess.file_exists(S.jpMapPath(i)))])
+	return FileAccess.file_exists(S.jpMapPath(i))
+## タイトル画面が出たら、残りの地図も裏で取っておく（次からすぐ始まる）
+func _prefetchJpMaps() -> void:
+	if not OS.has_feature("web") and OS.get_environment("KN_FAKEWEB") == "": return
+	for i in 4:
+		if not FileAccess.file_exists(S.jpMapPath(i)): await _fetchJpMap(i)
 func _onStarted() -> void:
 	var _st0 = Time.get_ticks_msec()
 	_updateBgm(true)
@@ -1467,7 +1517,7 @@ func _debugHash() -> void:
 		var p = kv.split("=")
 		if p.size() == 2: q[p[0]] = p[1]
 	await get_tree().process_frame
-	_newGame(q.get("size", "japan"))
+	await _newGame(q.get("size", "japan"))
 	var keepDip = S.CFG.showDip
 	var keepBattle = S.CFG.showCpuBattle
 	var keepSpeed = S.UI.speed
