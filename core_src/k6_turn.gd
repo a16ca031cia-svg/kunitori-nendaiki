@@ -83,6 +83,8 @@ func endTurn() -> void:
 		for a in na.armies:
 			if a != null: a.moved = false
 	siegeTurn()
+	armyUpkeepTurn()
+	occupationTurn()
 	randomEvent()
 	var nn: int = G.nations.size()
 	for a in nn:
@@ -91,6 +93,7 @@ func endTurn() -> void:
 	await yieldMaybe()
 	dipTurn()
 	await yieldMaybe()
+	tensionTurn()
 	decayThreat()
 	checkMilestones()
 	recordHistory()
@@ -138,7 +141,7 @@ func production() -> void:
 		var add := {"inf": 0.0, "spe": 0.0, "arc": 0.0, "cav": 0.0}
 		var room2: float = max(0, stockCap(na.id) - total(na.stock))
 		for t in own:
-			var base: float = (CFG.chaosMul if t.chaos > 0 else 1.0) * secMul(t) * fat
+			var base: float = (CFG.chaosMul if t.chaos > 0 else 1.0) * secMul(t) * fat * occMul(t)
 			var gm: float = base * (1 + linkBonus(t)) * pGold
 			var tm: float = base * (0.5 if starve else 1.0) * pTroop
 			if t.type == "city": gold += t.pop * CFG.taxRate * gm
@@ -150,7 +153,7 @@ func production() -> void:
 					continue
 				if b == "cf":
 					cfN += 1
-					gold += CF_GOLD * gm * (1.0 + nmod(na.id, "cf"))
+					gold += CF_GOLD * gm * (1.0 + nmod(na.id, "cf")) * consumerMul(na)
 					continue
 				if b == "market":
 					gold += BLD_OUT.market.gold * gm * (1.3 if t.get("trait") == "trade" else 1.0)
@@ -172,7 +175,7 @@ func production() -> void:
 		if na.has("eq"):
 			var sec0 := 1.0
 			if own.size(): sec0 = clamp_f(0.6 + na.get("stab", 50.0) / 125.0, 0.6, 1.4)
-			na.eqIn = int(round(mfN * EQ_PER_MF * (1.0 + nmod(na.id, "mf")) * sec0))
+			na.eqIn = int(round(mfN * EQ_PER_MF * (1.0 + nmod(na.id, "mf")) * sec0 * resMul(na.id)))
 			na.eq += na.eqIn
 			var troops := 0.0
 			for k in TK: troops += add[k]
@@ -830,6 +833,17 @@ func cpuTurn(nid: int) -> void:
 			if not warNb and foeA.is_empty(): continue
 			fr.append([t, powerOf(foeA, t, false) if foeA.size() else 0.0])
 		fr.sort_custom(func(x, y): return x[1] > y[1])
+		var myF := 0.0
+		var foeF := 0.0
+		for e in fr:
+			foeF += e[1]
+			var mineF := []
+			for x in armiesAt(e[0].id):
+				if x.owner == nid and total(x.t) > 0: mineF.append(x)
+			if mineF.size(): myF += powerOf(mineF, e[0], false)
+		for a in list:
+			if T(a.at).owner != nid: myF += powerOf([a], T(a.at), false)
+		offensiveCheck(nid, myF, foeF)
 		# 脅威のない持ち場（首都を除く）の守備軍も、前線へ回せるようにする
 		var thrSet := {}
 		for e in fr:
@@ -1003,7 +1017,7 @@ func cpuTurn(nid: int) -> void:
 						for x in armiesAt(nb.to):
 							if total(x.t) > 0: g3.append(x)
 						var dp3 := powerOf(g3, tg, true) if g3.size() else 0.0
-						if myP > 0 and myP >= dp3 * 2.0 and not _overwhelmed(nb.to, nid, a):
+						if myP > 0 and myP >= dp3 * (1.2 if na.get("offensive", false) else 2.0) and orgOf(a) >= 40 and not _overwhelmed(nb.to, nid, a):
 							grab = nb.to
 							break
 				if grab != null:
@@ -1033,6 +1047,11 @@ func cpuTurn(nid: int) -> void:
 			a.stay = "補充待ち"
 			a.wait = a.get("wait", 0) + 1
 			a.path = []
+			continue
+		# 組織率が低い軍は自国の領地で休む
+		if orgOf(a) < 35 and T(a.at).owner == nid and not _foeArmyAt(a.at, nid):
+			a.path = []
+			a.stay = "休養"
 			continue
 		# 隣に攻められる敵領地があれば取る
 		var mine := powerOf([a], T(a.at), false)

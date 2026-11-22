@@ -35,6 +35,7 @@ func hoiInit(g: Dictionary) -> void:
 			pop[ideo] = 55.0
 		na.ideo = ideo
 		na.persona = ideo
+		if G == g: refreshRole(na)
 		na.ipop = pop
 		_normPop(na)
 		na.stab = 55.0 + IDEO[ideo].stab + (cd.get("stab", 0) if cd != null else 0)
@@ -44,6 +45,9 @@ func hoiInit(g: Dictionary) -> void:
 		na.spirits = []
 		na.guar = []
 		na.focus = {"cur": null, "prog": 0, "done": []}
+		politicsInit(na)
+		na.tech = {}
+		na.rsch = []
 		if cd != null:
 			for sp in cd.sp: _addSpirit(na, sp[0], sp[1], sp[2], "固有")
 			# 開始時の底上げ（大国の工業力・兵の蓄え）
@@ -57,6 +61,7 @@ func hoiInit(g: Dictionary) -> void:
 		hoiRecalc(na)
 		na.stab = clamp_f(na.stab + na.mods.get("stab", 0.0), 5, 95)
 		na.ws = clamp_f(na.ws + na.mods.get("ws", 0.0), 0, 95)
+	resourceInit(g)
 	# 領地が多すぎる国は統治が行き届かない
 	var cnt := {}
 	for t in g.terrs:
@@ -101,6 +106,8 @@ func hoiRecalc(na: Dictionary) -> void:
 		for k in sp.m: m[k] = m.get(k, 0.0) + sp.m[k]
 	var im: Dictionary = IDEO.get(na.get("ideo", "neutral"), IDEO.neutral).mod
 	for k in im: m[k] = m.get(k, 0.0) + im[k]
+	politicsMods(na, m)
+	techMods(na, m)
 	na.mods = m
 ## 修正の値（国民精神と政体の合計）
 func nmod(nid, key: String) -> float:
@@ -162,6 +169,11 @@ func hoiTurn(nid: int) -> void:
 	var _h0 := Time.get_ticks_usec()
 	var war := inWar(nid)
 	var dg := cpuDanger(nid)
+	politicsTurn(na)
+	researchTurn(na)
+	civilWarTurn(na)
+	supportTurn(na)
+	factionApplyTurn(na)
 	# 戦争中に達成した開戦の方針は、戦争が終わってから
 	var pw = na.get("pendingWar", -1)
 	if pw >= 0 and not war:
@@ -174,10 +186,10 @@ func hoiTurn(nid: int) -> void:
 	var _h1 := Time.get_ticks_usec()
 	PROF["hoi:危険度"] = PROF.get("hoi:危険度", 0) + _h1 - _h0
 	# 政治力
-	na.pp = min(300.0, na.pp + ideo.pp + nmod(nid, "pp"))
+	na.pp = min(400.0, na.pp + ideo.pp + 2.0 + nmod(nid, "pp"))
 	# 安定度と戦争支持は目標へ少しずつ寄る
 	var st: float = 55.0 + ideo.stab + nmod(nid, "stab") - na.get("fatigue", 0) * 0.3 - (15 if na.food <= 0 else 0) - (5 if lordOf(nid) != null else 0)
-	var ws: float = 25.0 + ideo.ws + nmod(nid, "ws") + dg * 30.0 + (10 if war else 0) - na.get("fatigue", 0) * 0.6
+	var ws: float = 25.0 + ideo.ws + nmod(nid, "ws") + dg * 30.0 + (10 if war else 0) - na.get("fatigue", 0) * 0.6 + tension() * 0.35
 	var _h2 := Time.get_ticks_usec()
 	var top = topThreat()
 	if top != null and top.id != nid and nationsAdjacent(nid, top.id): ws += 10
@@ -227,6 +239,11 @@ func _ideoShift(na: Dictionary) -> void:
 	var coup: bool = p >= 50 and na.stab < (25 if oneParty else 40)
 	var peaceful: bool = p >= 65 and na.ideo != "fascism" and na.ideo != "communism"
 	if not coup and not peaceful: return
+	# 安定度がとても低い時の政変は内戦になる
+	if coup and na.stab < 20 and not na.has("civil") and ownCount(na.id) >= 6:
+		startCivilWar(na, best)
+		return
+	if na.has("civil"): return
 	setGov(na, best, "政変" if coup else "選挙")
 ## 政権を別の思想に変える（ふるまいも変わる）
 func setGov(na: Dictionary, k: String, why: String) -> void:
@@ -238,12 +255,16 @@ func setGov(na: Dictionary, k: String, why: String) -> void:
 	_normPop(na)
 	hoiRecalc(na)
 	na.stab = clamp_f(na.stab - (15 if why == "政変" else 5), 0, 100)
+	newLeader(na)
+	hoiRecalc(na)
 	var msg := "%s で%s — %s から %s の政権へ" % [na.name, why, IDEO[old].n, IDEO[k].n]
+	if newsworthy([na.id]): headline("%s で%s" % [natLabel(na.id), why], "%s から %s の政権へ" % [IDEO[old].n, IDEO[k].n])
 	logMsg(msg, "war" if k == "fascism" or why == "政変" else "")
 	chron(msg, na.id, "gov")
 	# 盟主と思想が違う陣営からは抜ける
 	var F = facOf(na.id)
 	if F != null and F.leader != na.id and NAT(F.leader).get("ideo") != k: leaveFaction(na.id, "政権交代")
+	refreshRole(na)
 ## 1ターン＝1か月（1936年1月から）
 func dateStr(turn: int) -> String:
 	return "%d年%d月" % [1936 + (turn - 1) / 12, (turn - 1) % 12 + 1]
@@ -460,17 +481,26 @@ func _demand(na: Dictionary, o: int, why: String) -> void:
 		if g.alive and g.id != nid and g.get("guar", []).has(o) and nationPower(g.id) > nationPower(nid): strongGuard = true
 	var appease: bool = F == null and not strongGuard
 	var annexOK: bool = not inWar(o) and (ratio >= 2.2 or (appease and alone >= 1.4) or (same and alone >= 1.1) or (sympathy >= 35 and alone >= 1.0))
+	# 歴史イベント：ミュンヘン会談（ドイツがチェコスロバキアに要求した時）
+	if na.name == "群馬県" and B.name == "栃木県" and G.get("size") == "japan" and not G.get("munichDone", false):
+		G.munichDone = true
+		var mr := munichEvent(nid, o)
+		if mr == "appease": annexOK = not inWar(o) and alone >= 1.0
+		elif mr == "stand": annexOK = false
 	var msg := ""
 	if annexOK and nationsAdjacent(nid, o):
 		msg = "%s が %s の要求を受け入れ、併合される（%s）" % [B.name, na.name, why]
 		logMsg(msg, "war")
 		chron(msg, nid, "dip")
 		annex(nid, o, why)
+		addTension(6)
+		headline("%s、%s を併合" % [natLabel(nid), natLabel(o)], why)
 	elif not inWar(o) and ratio >= 1.6 and lordOf(o) == null and vassalsOf(o).is_empty():
 		msg = "%s が %s の要求を受け入れ、従属する（%s）" % [B.name, na.name, why]
 		logMsg(msg, "war")
 		chron(msg, nid, "dip")
 		makeVassal(nid, o, why)
+		addTension(4)
 	else:
 		grantCB(nid, o, "「%s」の要求を拒否された" % why, 40)
 		_turnOn(nid, o)
@@ -558,7 +588,7 @@ func hoiWarOK(nid: int, target := -1) -> bool:
 	if not HOI_GATE: return true
 	var na := NAT(nid)
 	if not na.has("ideo"): return true
-	if na.ws < IDEO[na.ideo].wsNeed: return false
+	if na.ws < wsNeedOf(na): return false
 	if na.ideo == "democracy" and target >= 0 and not hasCB(nid, target): return false
 	return true
 ## 思想の相性：ファシズム・共産主義は同じ思想としか同盟しない
@@ -585,3 +615,40 @@ func _turnOn(nid: int, o: int) -> void:
 	if pactLeft(nid, o) > 0:
 		G.dip.pact[nid][o] = 0; G.dip.pact[o][nid] = 0
 		chron("%s が %s との不可侵条約を破棄する" % [NAT(nid).name, NAT(o).name], nid, "dip")
+
+# ---------- 世界の緊張（HOI4 の World Tension） ----------
+## 時代が進むほど、また宣戦・併合が起きるほど高まる（0〜100）。高いほど戦争支持が上がり、宣戦に必要な戦争支持が下がり、開戦しやすい
+func tension() -> float: return G.get("wt", 0.0) if G != null else 0.0
+func tensionTurn() -> void:
+	var d: int = G.get("declN", 0) - G.get("wtDecl", 0)
+	G.wtDecl = G.get("declN", 0)
+	var w := tension() + 0.18 + d * 2.0
+	# 戦争が長く途絶えると、少しずつ早く高まる（膠着を防ぐ）
+	if G.wars.is_empty(): w += 0.12
+	G.wt = clamp_f(w, 0, 100)
+func addTension(v: float) -> void: G.wt = clamp_f(tension() + v, 0, 100)
+## 宣戦に必要な戦争支持（世界の緊張で下がる）
+func wsNeedOf(na: Dictionary) -> float: return max(20.0, IDEO[na.ideo].wsNeed - tension() * 0.3)
+func tensionLabel(w: float) -> String: return "平穏" if w < 20 else ("きな臭い" if w < 45 else ("一触即発" if w < 70 else "世界大戦前夜"))
+
+## 政体に合わせた国名（見立ての国名）を付け直す
+func refreshRole(na: Dictionary) -> void:
+	var cd = COUNTRY.get(na.name) if G != null and G.get("size") == "japan" else null
+	if cd == null: return
+	var nm: String = cd.r
+	var rn = ROLE_NAMES.get(na.name)
+	if rn != null: nm = rn.get(na.ideo, nm)
+	elif na.ideo == "communism" and nm.find("共和") < 0 and nm.find("人民") < 0 and nm.find("共産") < 0 and nm != "モンゴル": nm += "人民共和国"
+	if na.get("role", "") != nm:
+		var old: String = na.get("role", "")
+		na.role = nm
+		if old != "" and G.turn > 1: chron("%s の国名が %s から %s に変わる" % [na.name, old, nm], na.id, "gov")
+## 陣営ごとの色（地図の表示用）
+func facColor(F) -> Color:
+	if F == null: return Color(0.55, 0.53, 0.5)
+	match F.name:
+		"枢軸": return Color("#8a6d3b")
+		"連合国": return Color("#4f8fd6")
+		"コミンテルン": return Color("#c0392b")
+	var h := float(abs(hash(F.name)) % 360) / 360.0
+	return Color.from_hsv(h, 0.45, 0.8)

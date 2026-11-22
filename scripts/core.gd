@@ -1,4 +1,4 @@
-# 自動生成：core_src/*.gd をまとめたもの（直接編集しない。tools/build_core.sh か publish.ps1 で作り直す）
+# 自動生成：core_src/*.gd をまとめたもの（直接編集しない。tools/build_core.sh で作り直す）
 extends Node
 
 # ==================== k0_base.gd ====================
@@ -829,12 +829,22 @@ func armyStats(a: Dictionary) -> Dictionary:
 		atk *= 1 + DIP.revoltAtk; def *= 1 + DIP.revoltDef; chg += DIP.revoltChg
 	atk *= 1 + nmod(a.owner, "atk") + (0.05 if na.get("eqMul", 1.0) >= 0.99 and na.get("eq", 0) > 6000 else 0.0)
 	def *= 1 + nmod(a.owner, "def")
+	chg += nmod(a.owner, "chg")
+	# 組織率・将軍の特性・この戦いの空と海（bmod）
+	var om = orgMul(a)
+	var gtm = genTraitMods(a, T(a.at))
+	var bm: float = a.get("bmod", 0.0)
+	atk *= om * (1.0 + gtm.atk + bm)
+	def *= om * (1.0 + gtm.def + bm)
+	chg += gtm.chg
 	return {"tot": tot, "atk": atk, "def": def, "chg": min(0.5, chg)}
 func fortMul(t: Dictionary) -> float:
 	var m: float = 1 + CFG.fortBase + FORT_DEV_DEF[t.dev] if t.type == "fort" else 1.0
 	if t.get("trait") == "mount": m += 0.15
 	m += terrOf(t).def
 	if t.type == "fort": m += nmod(t.owner, "fort")
+	# 本土（ゲーム開始時からの自国の領地）を守る時は防御 +25%（HOI4 の中核州のように、一気に滅ぶのを防ぐ）
+	if t.owner >= 0 and t.get("home", -1) == t.owner: m += 0.25
 	return max(0.5, m)
 
 ## 経路探索の下ごしらえ：隣の番号・入るのにかかるターン・持ち主を詰めた配列（地図・インフラ・持ち主が変わったら作り直す）
@@ -1339,6 +1349,7 @@ func checkNations() -> void:
 			logMsg("%s は滅亡しました" % na.name, "war")
 			chron("%s 滅亡" % na.name, na.id, "end")
 			nation_fell.emit(na.id)
+			headline("%s 滅亡" % natLabel(na.id), "")
 			for v in G.nations:
 				if v.alive and v.lord == na.id: freeVassal(v.id, "主君の滅亡")
 	warSuccession()
@@ -1411,6 +1422,11 @@ func battleTick(A: Array, D: Array, t: Dictionary):
 	applyLoss(A, dToA * am)
 	return {"ca": ca, "cd": cd, "dToD": dToD, "dToA": dToA * am, "sa": sa, "sd": sd}
 func recordBattle(A: Array, D: Array, res: String) -> void:
+	orgAfterBattle(A, D, res)
+	var bt = T(D[0].at) if D.size() and D[0] != null else (T(A[0].at) if A.size() and A[0] != null else null)
+	if bt != null: genAfterBattle(A, D, res, bt)
+	for x in A + D:
+		if x != null: x.erase("bmod")
 	var win = A if res == "A" else D
 	var lose = D if res == "A" else A
 	if win.size(): NAT(win[0].owner).wins += 1
@@ -1476,6 +1492,13 @@ func runBattle(atts: Array, defs: Array, t: Dictionary):
 	for a in atts:
 		if a != null and total(a.t) > 0: A.append(a)
 	var lead = A[0]
+	# 制空権（空軍力 1.5 倍で攻防 ±10%）と、海峡越しの攻めの制海権（無いと攻撃 -25%）
+	if defs.size() and defs[0] != null:
+		var ae = airEdge(lead.owner, defs[0].owner)
+		var sp = seaEdgePenalty(lead.owner, defs[0].owner, lead.at, t.id)
+		for x in A: x.bmod = ae + sp
+		for x in defs:
+			if x != null: x.bmod = -ae
 	var watch: bool = CFG.showCpuBattle and UI.speed != 3 and (concerns([lead.owner, defs[0].owner]) or UI.get("watchAll", false)) and battle_show.get_connections().size() > 0
 	# 自動進行中は、戦闘画面を見せる時間を1ターンあたりの上限で区切る（ターンが長く止まらないように）
 	if watch and UI.get("auto", false) and BATTLE_SPENT + BEAT_SPENT + 1500 > BEAT_MAX: watch = false
@@ -2146,6 +2169,7 @@ func declareWar(a: int, b: int, _byPlayer := false) -> void:
 	G.declN = G.get("declN", 0) + 1
 	warInit(a, b, cpuWarGoal(a, b))
 	var msg = "%s が %s に宣戦布告（目標：%s）" % [NAT(a).name, NAT(b).name, goalLabel(a, b)]
+	if newsworthy([a, b]): headline("%s、%s に宣戦布告" % [natLabel(a), natLabel(b)], "目標：%s" % goalLabel(a, b))
 	logMsg(msg, "war")
 	chron(msg, a, "dip")
 	var note = ("同盟を破っての開戦／" if wasAlly else "") + (("大義：" + why) if why != "" else "大義なき開戦（国内の治安・諸国の評判が大きく下がる）") + "／目標：" + goalLabel(a, b)
@@ -2214,6 +2238,14 @@ func shareWars(a: int, b: int) -> void:
 			enterWar(y, o.id, "%s との同盟により参戦" % NAT(x).name, warOf(x, o.id))
 func enterWar(a: int, b: int, why: String, wid: int) -> void:
 	if a == b or atWar(a, b) or not NAT(a).alive or not NAT(b).alive: return
+	# 1つの戦争で片方に加わる国は、主役を含めて4か国まで（遠くの国まで一斉に袋だたきにする連鎖を防ぐ）。属国は主君に従う
+	if wid and G.wars.has(wid):
+		var Wj: Dictionary = G.wars[wid]
+		var mySide: Array = Wj.sB if Wj.sA.has(b) else Wj.sA
+		var bound = false
+		for m in mySide:
+			if isVassal(a, m): bound = true
+		if mySide.size() >= WAR_SIDE_MAX and not bound: return
 	setRel(a, b, "war")
 	if wid and G.wars.has(wid): joinSide(wid, a, b)
 	else: newWar(a, b)
@@ -2225,6 +2257,7 @@ func enterWar(a: int, b: int, why: String, wid: int) -> void:
 	logMsg(msg, "war")
 	chron(msg, a, "dip")
 	dipReport("join", a, b, true, why)
+const WAR_SIDE_MAX := 4
 func _joinCamp(x: int, y: int, attacker: bool) -> void:
 	for id in campOf(x):
 		if id == x or id == y: continue
@@ -2954,6 +2987,7 @@ func makeFaction(n: int, name0 := "") -> void:
 	G.factions[id] = {"id": id, "name": nm, "leader": n, "members": [n], "t0": G.turn}
 	NAT(n).faction = id
 	var msg = "%s が「%s」を結成する" % [NAT(n).name, nm]
+	headline("「%s」結成" % nm, "盟主 %s" % natLabel(n))
 	logMsg(msg, "good")
 	chron(msg, n, "dip")
 	dipReport("faction", n, n, true, "盟主として近くの国を招きます")
@@ -3431,7 +3465,7 @@ func cpuDiplomacy(nid: int) -> void:
 		if d.k == "guard": guarding = true
 	var chanceMul: float = DES.warChanceMul if wantWar else (0.4 if guarding else (DES.noWishMul if G.nations.size() > 16 else 0.8))
 	var fasc: bool = na.persona == "fascism"
-	if randf() > DIP.cpuWarChance.get(na.persona, 0.2) * (max(0.7, crowdMul()) if fasc else crowdMul()) * (max(1.0, chanceMul) if fasc else chanceMul): return
+	if randf() > DIP.cpuWarChance.get(na.persona, 0.2) * (max(0.7, crowdMul()) if fasc else crowdMul()) * (max(1.0, chanceMul) if fasc else chanceMul) * (1.0 + tension() / 35.0): return
 	var mine = nationPower(nid)
 	var ambition: float = min(DIP.cpuAmbitionMax, G.turn * DIP.cpuAmbition)
 	var needW: float = DIP.cpuWarNeed.get(na.persona, 34)
@@ -3457,6 +3491,7 @@ func cpuDiplomacy(nid: int) -> void:
 		if isTrade(nid, o.id): sc -= 15
 		if not cb: sc -= 15
 		elif fasc: sc += 25
+		if resWant(nid, o.id): sc += 12   # 足りない資源を持つ隣国を狙う
 		if dv != null: sc += 10 if dv.k == "guard" else DES.warBonus
 		if sc >= needW: cand.append({"id": o.id, "sc": sc})
 	if cand.is_empty():
@@ -3500,7 +3535,7 @@ func cpuPeaceTies(nid: int, P: Dictionary) -> void:
 func cpuFabricate(nid: int, P: Dictionary, mine: float) -> void:
 	if not (P.fab > 0) or randf() > P.fab * crowdMul(): return
 	var na = NAT(nid)
-	if na.has("ideo") and na.ws < IDEO[na.ideo].wsNeed - 10: return
+	if na.has("ideo") and na.ws < wsNeedOf(na) - 10: return
 	if na.gold < CASUS.fabGold + 4000: return
 	for o in G.nations:
 		if o.alive and fabLeft(nid, o.id) > 0: return
@@ -4078,6 +4113,8 @@ func endTurn() -> void:
 		for a in na.armies:
 			if a != null: a.moved = false
 	siegeTurn()
+	armyUpkeepTurn()
+	occupationTurn()
 	randomEvent()
 	var nn: int = G.nations.size()
 	for a in nn:
@@ -4086,6 +4123,7 @@ func endTurn() -> void:
 	await yieldMaybe()
 	dipTurn()
 	await yieldMaybe()
+	tensionTurn()
 	decayThreat()
 	checkMilestones()
 	recordHistory()
@@ -4133,7 +4171,7 @@ func production() -> void:
 		var add = {"inf": 0.0, "spe": 0.0, "arc": 0.0, "cav": 0.0}
 		var room2: float = max(0, stockCap(na.id) - total(na.stock))
 		for t in own:
-			var base: float = (CFG.chaosMul if t.chaos > 0 else 1.0) * secMul(t) * fat
+			var base: float = (CFG.chaosMul if t.chaos > 0 else 1.0) * secMul(t) * fat * occMul(t)
 			var gm: float = base * (1 + linkBonus(t)) * pGold
 			var tm: float = base * (0.5 if starve else 1.0) * pTroop
 			if t.type == "city": gold += t.pop * CFG.taxRate * gm
@@ -4145,7 +4183,7 @@ func production() -> void:
 					continue
 				if b == "cf":
 					cfN += 1
-					gold += CF_GOLD * gm * (1.0 + nmod(na.id, "cf"))
+					gold += CF_GOLD * gm * (1.0 + nmod(na.id, "cf")) * consumerMul(na)
 					continue
 				if b == "market":
 					gold += BLD_OUT.market.gold * gm * (1.3 if t.get("trait") == "trade" else 1.0)
@@ -4167,7 +4205,7 @@ func production() -> void:
 		if na.has("eq"):
 			var sec0 = 1.0
 			if own.size(): sec0 = clamp_f(0.6 + na.get("stab", 50.0) / 125.0, 0.6, 1.4)
-			na.eqIn = int(round(mfN * EQ_PER_MF * (1.0 + nmod(na.id, "mf")) * sec0))
+			na.eqIn = int(round(mfN * EQ_PER_MF * (1.0 + nmod(na.id, "mf")) * sec0 * resMul(na.id)))
 			na.eq += na.eqIn
 			var troops = 0.0
 			for k in TK: troops += add[k]
@@ -4825,6 +4863,17 @@ func cpuTurn(nid: int) -> void:
 			if not warNb and foeA.is_empty(): continue
 			fr.append([t, powerOf(foeA, t, false) if foeA.size() else 0.0])
 		fr.sort_custom(func(x, y): return x[1] > y[1])
+		var myF = 0.0
+		var foeF = 0.0
+		for e in fr:
+			foeF += e[1]
+			var mineF = []
+			for x in armiesAt(e[0].id):
+				if x.owner == nid and total(x.t) > 0: mineF.append(x)
+			if mineF.size(): myF += powerOf(mineF, e[0], false)
+		for a in list:
+			if T(a.at).owner != nid: myF += powerOf([a], T(a.at), false)
+		offensiveCheck(nid, myF, foeF)
 		# 脅威のない持ち場（首都を除く）の守備軍も、前線へ回せるようにする
 		var thrSet = {}
 		for e in fr:
@@ -4998,7 +5047,7 @@ func cpuTurn(nid: int) -> void:
 						for x in armiesAt(nb.to):
 							if total(x.t) > 0: g3.append(x)
 						var dp3 = powerOf(g3, tg, true) if g3.size() else 0.0
-						if myP > 0 and myP >= dp3 * 2.0 and not _overwhelmed(nb.to, nid, a):
+						if myP > 0 and myP >= dp3 * (1.2 if na.get("offensive", false) else 2.0) and orgOf(a) >= 40 and not _overwhelmed(nb.to, nid, a):
 							grab = nb.to
 							break
 				if grab != null:
@@ -5028,6 +5077,11 @@ func cpuTurn(nid: int) -> void:
 			a.stay = "補充待ち"
 			a.wait = a.get("wait", 0) + 1
 			a.path = []
+			continue
+		# 組織率が低い軍は自国の領地で休む
+		if orgOf(a) < 35 and T(a.at).owner == nid and not _foeArmyAt(a.at, nid):
+			a.path = []
+			a.stay = "休養"
 			continue
 		# 隣に攻められる敵領地があれば取る
 		var mine = powerOf([a], T(a.at), false)
@@ -5314,6 +5368,9 @@ func loadSlot(i: int) -> bool:
 		for n in g.nations:
 			n.erase("ideo")
 		hoiInit(g)
+	for n in g.nations:
+		if n.has("ideo"): politicsInit(n)
+	resourceInit(g)
 	resetColors(g.get("ncol", null))
 	stopAuto()
 	G = g
@@ -5388,6 +5445,7 @@ func hoiInit(g: Dictionary) -> void:
 			pop[ideo] = 55.0
 		na.ideo = ideo
 		na.persona = ideo
+		if G == g: refreshRole(na)
 		na.ipop = pop
 		_normPop(na)
 		na.stab = 55.0 + IDEO[ideo].stab + (cd.get("stab", 0) if cd != null else 0)
@@ -5397,6 +5455,9 @@ func hoiInit(g: Dictionary) -> void:
 		na.spirits = []
 		na.guar = []
 		na.focus = {"cur": null, "prog": 0, "done": []}
+		politicsInit(na)
+		na.tech = {}
+		na.rsch = []
 		if cd != null:
 			for sp in cd.sp: _addSpirit(na, sp[0], sp[1], sp[2], "固有")
 			# 開始時の底上げ（大国の工業力・兵の蓄え）
@@ -5410,6 +5471,7 @@ func hoiInit(g: Dictionary) -> void:
 		hoiRecalc(na)
 		na.stab = clamp_f(na.stab + na.mods.get("stab", 0.0), 5, 95)
 		na.ws = clamp_f(na.ws + na.mods.get("ws", 0.0), 0, 95)
+	resourceInit(g)
 	# 領地が多すぎる国は統治が行き届かない
 	var cnt = {}
 	for t in g.terrs:
@@ -5454,6 +5516,8 @@ func hoiRecalc(na: Dictionary) -> void:
 		for k in sp.m: m[k] = m.get(k, 0.0) + sp.m[k]
 	var im: Dictionary = IDEO.get(na.get("ideo", "neutral"), IDEO.neutral).mod
 	for k in im: m[k] = m.get(k, 0.0) + im[k]
+	politicsMods(na, m)
+	techMods(na, m)
 	na.mods = m
 ## 修正の値（国民精神と政体の合計）
 func nmod(nid, key: String) -> float:
@@ -5515,6 +5579,11 @@ func hoiTurn(nid: int) -> void:
 	var _h0 = Time.get_ticks_usec()
 	var war = inWar(nid)
 	var dg = cpuDanger(nid)
+	politicsTurn(na)
+	researchTurn(na)
+	civilWarTurn(na)
+	supportTurn(na)
+	factionApplyTurn(na)
 	# 戦争中に達成した開戦の方針は、戦争が終わってから
 	var pw = na.get("pendingWar", -1)
 	if pw >= 0 and not war:
@@ -5527,10 +5596,10 @@ func hoiTurn(nid: int) -> void:
 	var _h1 = Time.get_ticks_usec()
 	PROF["hoi:危険度"] = PROF.get("hoi:危険度", 0) + _h1 - _h0
 	# 政治力
-	na.pp = min(300.0, na.pp + ideo.pp + nmod(nid, "pp"))
+	na.pp = min(400.0, na.pp + ideo.pp + 2.0 + nmod(nid, "pp"))
 	# 安定度と戦争支持は目標へ少しずつ寄る
 	var st: float = 55.0 + ideo.stab + nmod(nid, "stab") - na.get("fatigue", 0) * 0.3 - (15 if na.food <= 0 else 0) - (5 if lordOf(nid) != null else 0)
-	var ws: float = 25.0 + ideo.ws + nmod(nid, "ws") + dg * 30.0 + (10 if war else 0) - na.get("fatigue", 0) * 0.6
+	var ws: float = 25.0 + ideo.ws + nmod(nid, "ws") + dg * 30.0 + (10 if war else 0) - na.get("fatigue", 0) * 0.6 + tension() * 0.35
 	var _h2 = Time.get_ticks_usec()
 	var top = topThreat()
 	if top != null and top.id != nid and nationsAdjacent(nid, top.id): ws += 10
@@ -5580,6 +5649,11 @@ func _ideoShift(na: Dictionary) -> void:
 	var coup: bool = p >= 50 and na.stab < (25 if oneParty else 40)
 	var peaceful: bool = p >= 65 and na.ideo != "fascism" and na.ideo != "communism"
 	if not coup and not peaceful: return
+	# 安定度がとても低い時の政変は内戦になる
+	if coup and na.stab < 20 and not na.has("civil") and ownCount(na.id) >= 6:
+		startCivilWar(na, best)
+		return
+	if na.has("civil"): return
 	setGov(na, best, "政変" if coup else "選挙")
 ## 政権を別の思想に変える（ふるまいも変わる）
 func setGov(na: Dictionary, k: String, why: String) -> void:
@@ -5591,12 +5665,16 @@ func setGov(na: Dictionary, k: String, why: String) -> void:
 	_normPop(na)
 	hoiRecalc(na)
 	na.stab = clamp_f(na.stab - (15 if why == "政変" else 5), 0, 100)
+	newLeader(na)
+	hoiRecalc(na)
 	var msg = "%s で%s — %s から %s の政権へ" % [na.name, why, IDEO[old].n, IDEO[k].n]
+	if newsworthy([na.id]): headline("%s で%s" % [natLabel(na.id), why], "%s から %s の政権へ" % [IDEO[old].n, IDEO[k].n])
 	logMsg(msg, "war" if k == "fascism" or why == "政変" else "")
 	chron(msg, na.id, "gov")
 	# 盟主と思想が違う陣営からは抜ける
 	var F = facOf(na.id)
 	if F != null and F.leader != na.id and NAT(F.leader).get("ideo") != k: leaveFaction(na.id, "政権交代")
+	refreshRole(na)
 ## 1ターン＝1か月（1936年1月から）
 func dateStr(turn: int) -> String:
 	return "%d年%d月" % [1936 + (turn - 1) / 12, (turn - 1) % 12 + 1]
@@ -5813,17 +5891,26 @@ func _demand(na: Dictionary, o: int, why: String) -> void:
 		if g.alive and g.id != nid and g.get("guar", []).has(o) and nationPower(g.id) > nationPower(nid): strongGuard = true
 	var appease: bool = F == null and not strongGuard
 	var annexOK: bool = not inWar(o) and (ratio >= 2.2 or (appease and alone >= 1.4) or (same and alone >= 1.1) or (sympathy >= 35 and alone >= 1.0))
+	# 歴史イベント：ミュンヘン会談（ドイツがチェコスロバキアに要求した時）
+	if na.name == "群馬県" and B.name == "栃木県" and G.get("size") == "japan" and not G.get("munichDone", false):
+		G.munichDone = true
+		var mr = munichEvent(nid, o)
+		if mr == "appease": annexOK = not inWar(o) and alone >= 1.0
+		elif mr == "stand": annexOK = false
 	var msg = ""
 	if annexOK and nationsAdjacent(nid, o):
 		msg = "%s が %s の要求を受け入れ、併合される（%s）" % [B.name, na.name, why]
 		logMsg(msg, "war")
 		chron(msg, nid, "dip")
 		annex(nid, o, why)
+		addTension(6)
+		headline("%s、%s を併合" % [natLabel(nid), natLabel(o)], why)
 	elif not inWar(o) and ratio >= 1.6 and lordOf(o) == null and vassalsOf(o).is_empty():
 		msg = "%s が %s の要求を受け入れ、従属する（%s）" % [B.name, na.name, why]
 		logMsg(msg, "war")
 		chron(msg, nid, "dip")
 		makeVassal(nid, o, why)
+		addTension(4)
 	else:
 		grantCB(nid, o, "「%s」の要求を拒否された" % why, 40)
 		_turnOn(nid, o)
@@ -5911,7 +5998,7 @@ func hoiWarOK(nid: int, target := -1) -> bool:
 	if not HOI_GATE: return true
 	var na = NAT(nid)
 	if not na.has("ideo"): return true
-	if na.ws < IDEO[na.ideo].wsNeed: return false
+	if na.ws < wsNeedOf(na): return false
 	if na.ideo == "democracy" and target >= 0 and not hasCB(nid, target): return false
 	return true
 ## 思想の相性：ファシズム・共産主義は同じ思想としか同盟しない
@@ -5938,6 +6025,720 @@ func _turnOn(nid: int, o: int) -> void:
 	if pactLeft(nid, o) > 0:
 		G.dip.pact[nid][o] = 0; G.dip.pact[o][nid] = 0
 		chron("%s が %s との不可侵条約を破棄する" % [NAT(nid).name, NAT(o).name], nid, "dip")
+
+# ---------- 世界の緊張（HOI4 の World Tension） ----------
+## 時代が進むほど、また宣戦・併合が起きるほど高まる（0〜100）。高いほど戦争支持が上がり、宣戦に必要な戦争支持が下がり、開戦しやすい
+func tension() -> float: return G.get("wt", 0.0) if G != null else 0.0
+func tensionTurn() -> void:
+	var d: int = G.get("declN", 0) - G.get("wtDecl", 0)
+	G.wtDecl = G.get("declN", 0)
+	var w = tension() + 0.18 + d * 2.0
+	# 戦争が長く途絶えると、少しずつ早く高まる（膠着を防ぐ）
+	if G.wars.is_empty(): w += 0.12
+	G.wt = clamp_f(w, 0, 100)
+func addTension(v: float) -> void: G.wt = clamp_f(tension() + v, 0, 100)
+## 宣戦に必要な戦争支持（世界の緊張で下がる）
+func wsNeedOf(na: Dictionary) -> float: return max(20.0, IDEO[na.ideo].wsNeed - tension() * 0.3)
+func tensionLabel(w: float) -> String: return "平穏" if w < 20 else ("きな臭い" if w < 45 else ("一触即発" if w < 70 else "世界大戦前夜"))
+
+## 政体に合わせた国名（見立ての国名）を付け直す
+func refreshRole(na: Dictionary) -> void:
+	var cd = COUNTRY.get(na.name) if G != null and G.get("size") == "japan" else null
+	if cd == null: return
+	var nm: String = cd.r
+	var rn = ROLE_NAMES.get(na.name)
+	if rn != null: nm = rn.get(na.ideo, nm)
+	elif na.ideo == "communism" and nm.find("共和") < 0 and nm.find("人民") < 0 and nm.find("共産") < 0 and nm != "モンゴル": nm += "人民共和国"
+	if na.get("role", "") != nm:
+		var old: String = na.get("role", "")
+		na.role = nm
+		if old != "" and G.turn > 1: chron("%s の国名が %s から %s に変わる" % [na.name, old, nm], na.id, "gov")
+## 陣営ごとの色（地図の表示用）
+func facColor(F) -> Color:
+	if F == null: return Color(0.55, 0.53, 0.5)
+	match F.name:
+		"枢軸": return Color("#8a6d3b")
+		"連合国": return Color("#4f8fd6")
+		"コミンテルン": return Color("#c0392b")
+	var h = float(abs(hash(F.name)) % 360) / 360.0
+	return Color.from_hsv(h, 0.45, 0.8)
+
+# ==================== k8b_politics.gd ====================
+# HOI4 を参考にした政治：指導者・国家法（徴兵・経済・貿易）・顧問・決定（政治力の使い道）
+
+# ---------- 国家法 ----------
+## 段階の順に並べる。need=必要な戦争支持（war=戦争中でないと選べない）
+const LAWS := {
+	"conscr": {"n": "徴兵法", "list": [
+		{"id": "vol", "n": "志願兵制", "d": "兵の上限 -30%・人口の伸び +5%", "m": {"cap": -0.30, "grow": 0.05}, "need": 0},
+		{"id": "lim", "n": "限定徴兵", "d": "標準", "m": {}, "need": 0},
+		{"id": "ext", "n": "拡大徴兵", "d": "兵の上限 +30%・人口の伸び -5%・ゴールド -5%", "m": {"cap": 0.30, "grow": -0.05, "gold": -0.05}, "need": 40},
+		{"id": "svc", "n": "兵役義務", "d": "兵の上限 +60%・人口の伸び -10%・ゴールド -10%", "m": {"cap": 0.60, "grow": -0.10, "gold": -0.10}, "need": 60, "war": true},
+		{"id": "all", "n": "国民総動員", "d": "兵の上限 +100%・人口の伸び -20%・ゴールド -20%・食料 -10%", "m": {"cap": 1.0, "grow": -0.20, "gold": -0.20, "food": -0.10}, "need": 80, "war": true},
+	]},
+	"econ": {"n": "経済法", "list": [
+		{"id": "civ", "n": "民間経済", "d": "消費財 35%・民需工場の出力 +15%・軍需工場の出力 -10%・安定度 +5", "m": {"cf": 0.15, "mf": -0.10, "stab": 5.0}, "need": 0, "cg": 0.35},
+		{"id": "early", "n": "初期動員", "d": "消費財 30%・標準", "m": {}, "need": 0, "cg": 0.30},
+		{"id": "part", "n": "部分動員", "d": "消費財 25%・軍需工場の出力 +10%・民需工場の出力 -5%", "m": {"mf": 0.10, "cf": -0.05}, "need": 30, "cg": 0.25},
+		{"id": "war", "n": "戦時経済", "d": "消費財 20%・軍需工場の出力 +20%・民需工場の出力 -10%・安定度 -5", "m": {"mf": 0.20, "cf": -0.10, "stab": -5.0}, "need": 60, "cg": 0.20},
+		{"id": "total", "n": "総力戦", "d": "消費財 10%・軍需工場の出力 +30%・民需工場の出力 -20%・安定度 -10", "m": {"mf": 0.30, "cf": -0.20, "stab": -10.0}, "need": 0, "war": true, "cg": 0.10},
+	]},
+	"trade": {"n": "貿易法", "list": [
+		{"id": "free", "n": "自由貿易", "d": "ゴールド +10%・資源の輸出が多い（国内の資源 -20%）", "m": {"gold": 0.10, "res": -0.20}, "need": 0},
+		{"id": "exp", "n": "輸出重視", "d": "ゴールド +5%・資源の輸出（国内の資源 -10%）", "m": {"gold": 0.05, "res": -0.10}, "need": 0},
+		{"id": "lim", "n": "輸出制限", "d": "標準", "m": {}, "need": 0},
+		{"id": "closed", "n": "閉鎖経済", "d": "ゴールド -10%・国内の資源 +10%・軍需工場の出力 +5%", "m": {"gold": -0.10, "res": 0.10, "mf": 0.05}, "need": 0},
+	]},
+}
+const LAW_KEYS := ["conscr", "econ", "trade"]
+const LAW_COST := 100.0
+
+# ---------- 顧問 ----------
+## slot：pol（政治顧問・2人）／staff（参謀・1人）／design（設計会社・1つ）
+const ADVISORS := [
+	{"id": "ind", "slot": "pol", "n": "産業の大家", "d": "民需工場の出力 +10%・建設費 -10%", "m": {"cf": 0.10, "build": -0.10}},
+	{"id": "prop", "slot": "pol", "n": "宣伝相", "d": "戦争支持 +10", "m": {"ws": 10.0}},
+	{"id": "mod", "slot": "pol", "n": "穏健な調停者", "d": "安定度 +10", "m": {"stab": 10.0}},
+	{"id": "dipl", "slot": "pol", "n": "外交の達人", "d": "政治力 +0.5／ターン・安定度 +3", "m": {"pp": 0.5, "stab": 3.0}},
+	{"id": "iron", "slot": "pol", "n": "鉄の宰相", "d": "兵の生産 +10%", "m": {"troop": 0.10}, "ideo": ["fascism", "neutral"]},
+	{"id": "plan", "slot": "pol", "n": "計画経済の旗手", "d": "軍需工場の出力 +15%", "m": {"mf": 0.15}, "ideo": ["communism"]},
+	{"id": "atk", "slot": "staff", "n": "攻勢の参謀", "d": "攻撃 +8%", "m": {"atk": 0.08}},
+	{"id": "def", "slot": "staff", "n": "守勢の参謀", "d": "防御 +8%", "m": {"def": 0.08}},
+	{"id": "log", "slot": "staff", "n": "兵站の参謀", "d": "兵の上限 +15%・消耗 -30%", "m": {"cap": 0.15, "attr": -0.30}},
+	{"id": "fort", "slot": "staff", "n": "築城の参謀", "d": "砦の防御 +20%", "m": {"fort": 0.20}},
+	{"id": "arms", "slot": "design", "n": "小火器工廠", "d": "攻撃 +4%・軍需工場の出力 +5%", "m": {"atk": 0.04, "mf": 0.05}},
+	{"id": "art", "slot": "design", "n": "重砲工廠", "d": "攻撃 +6%", "m": {"atk": 0.06}},
+	{"id": "tank", "slot": "design", "n": "装甲工廠", "d": "攻撃 +5%・防御 +3%", "m": {"atk": 0.05, "def": 0.03}},
+	{"id": "aero", "slot": "design", "n": "航空機製作所", "d": "空軍力 +25%", "m": {"air": 0.25}},
+]
+const ADV_SLOTS := {"pol": 2, "staff": 1, "design": 1}
+const ADV_COST := 150.0
+
+# ---------- 決定 ----------
+const DECISIONS := [
+	{"id": "border", "n": "国境紛争をしかける", "d": "弱い隣国への大義（20ターン）・世界の緊張 +2", "pp": 60},
+	{"id": "bonds", "n": "戦時公債", "d": "ゴールドを得る・安定度 -5", "pp": 40},
+	{"id": "order", "n": "治安強化", "d": "全領地の治安 +15・安定度 +5", "pp": 50},
+	{"id": "diplo", "n": "外交攻勢", "d": "隣国の好感度 +10・世界の緊張 -2", "pp": 50},
+	{"id": "mobil", "n": "総動員令", "d": "兵の蓄え +20%・安定度 -5", "pp": 70},
+]
+
+# ---------- 指導者 ----------
+const LEADER_TITLE := {"democracy": "首相", "communism": "書記長", "fascism": "総統", "neutral": "国家元首"}
+const LEADER_TRAITS := [
+	{"n": "カリスマ", "d": "安定度 +5・戦争支持 +5", "m": {"stab": 5.0, "ws": 5.0}},
+	{"n": "能吏", "d": "政治力 +0.5／ターン", "m": {"pp": 0.5}},
+	{"n": "軍人上がり", "d": "攻撃 +3%・兵の生産 +5%", "m": {"atk": 0.03, "troop": 0.05}},
+	{"n": "倹約家", "d": "ゴールド +5%", "m": {"gold": 0.05}},
+	{"n": "人気者", "d": "安定度 +10", "m": {"stab": 10.0}},
+	{"n": "工業通", "d": "軍需・民需工場の出力 +5%", "m": {"mf": 0.05, "cf": 0.05}},
+	{"n": "慎重", "d": "防御 +5%・戦争支持 -5", "m": {"def": 0.05, "ws": -5.0}},
+	{"n": "野心家", "d": "戦争支持 +10・安定度 -5", "m": {"ws": 10.0, "stab": -5.0}},
+]
+const NAME_A := ["ハンス", "カール", "フランツ", "アントン", "ミハイル", "ニコライ", "ジョン", "エドワード", "ピエール", "ルイ", "ジュゼッペ", "マリオ", "ヨゼフ", "アレクサンデル", "ウラジミル", "トマス", "ヘンリク", "ステファン", "イシュトヴァン", "コンスタンティン", "ペドロ", "ミゲル", "グスタフ", "オスカー", "ヴィクトル", "エミール"]
+const NAME_B := ["ヴェーバー", "シュミット", "ベッカー", "イワノフ", "ペトロフ", "スミス", "ウィルソン", "デュボア", "マルタン", "ロッシ", "コンティ", "ノヴァク", "コヴァルスキ", "ホルヴァート", "ポペスク", "ガルシア", "ロペス", "リンドベリ", "ハンセン", "コーホネン", "ヤンセン", "ペテルセン", "ディミトロフ", "パパドプロス", "ユルドゥズ", "モレノ"]
+func newLeader(na: Dictionary) -> void:
+	var tr: Dictionary = LEADER_TRAITS[randi() % LEADER_TRAITS.size()]
+	na.leader = {"n": "%s・%s" % [NAME_A[randi() % NAME_A.size()], NAME_B[randi() % NAME_B.size()]], "t": tr.n, "since": G.turn if G != null else 1}
+func leaderTrait(na: Dictionary):
+	var l = na.get("leader")
+	if l == null: return null
+	for tr in LEADER_TRAITS:
+		if tr.n == l.t: return tr
+	return null
+func leaderTitle(na: Dictionary) -> String: return LEADER_TITLE.get(na.get("ideo", "neutral"), "国家元首")
+
+# ---------- 初期化（hoiInit から） ----------
+func politicsInit(na: Dictionary) -> void:
+	if not na.has("laws"):
+		var lw = {"conscr": "lim", "econ": "early", "trade": "lim"}
+		match na.get("ideo", "neutral"):
+			"fascism": lw = {"conscr": "ext", "econ": "part", "trade": "closed"}
+			"communism": lw = {"conscr": "ext", "econ": "part", "trade": "lim"}
+			"democracy": lw = {"conscr": "vol", "econ": "civ", "trade": "free"}
+		na.laws = lw
+	if not na.has("advisors"): na.advisors = []
+	if not na.has("leader"): newLeader(na)
+	if not na.has("decCool"): na.decCool = {}
+func lawOf(na: Dictionary, k: String) -> Dictionary:
+	var id: String = na.get("laws", {}).get(k, "")
+	for l in LAWS[k].list:
+		if l.id == id: return l
+	return LAWS[k].list[1]
+func consumerShare(na: Dictionary) -> float: return lawOf(na, "econ").get("cg", 0.3)
+## 国民精神・政体のほかに足す修正（hoiRecalc から）
+func politicsMods(na: Dictionary, m: Dictionary) -> void:
+	for k in LAW_KEYS:
+		var l = lawOf(na, k)
+		for x in l.m: m[x] = m.get(x, 0.0) + l.m[x]
+	for aid in na.get("advisors", []):
+		for a in ADVISORS:
+			if a.id == aid:
+				for x in a.m: m[x] = m.get(x, 0.0) + a.m[x]
+	var tr = leaderTrait(na)
+	if tr != null:
+		for x in tr.m: m[x] = m.get(x, 0.0) + tr.m[x]
+
+# ---------- 毎ターン：CPU が政治力を使う ----------
+func politicsTurn(na: Dictionary) -> void:
+	var nid: int = na.id
+	var war = inWar(nid)
+	var hot: bool = war or tension() >= 50
+	# 1) 国家法：戦争中・緊張が高ければ段階を上げる。長い平和で疲れていれば下げる
+	if na.pp >= LAW_COST + 20:
+		for k in ["conscr", "econ"]:
+			var lst: Array = LAWS[k].list
+			var cur = 0
+			for i in lst.size():
+				if lst[i].id == na.laws[k]: cur = i
+			var want = cur
+			var arm: bool = hot or na.ideo == "fascism" or (na.ideo == "communism" and tension() >= 30)
+			if arm and cur + 1 < lst.size():
+				var nx: Dictionary = lst[cur + 1]
+				if na.ws >= nx.need and (not nx.get("war", false) or war): want = cur + 1
+			elif not war and tension() < 30 and cur > 1 and na.get("fatigue", 0) > 20: want = cur - 1
+			if want != cur:
+				na.laws[k] = lst[want].id
+				na.pp -= LAW_COST
+				hoiRecalc(na)
+				var msg = "%s が%sを「%s」に改める" % [na.name, LAWS[k].n, lst[want].n]
+				if concerns([nid]): logMsg(msg)
+				chron(msg, nid, "gov")
+				break
+	# 戦争が終わったら、戦時にしか選べない段階からは戻す
+	if not war:
+		for k in ["conscr", "econ"]:
+			var l = lawOf(na, k)
+			if l.get("war", false):
+				var lst: Array = LAWS[k].list
+				for i in lst.size():
+					if lst[i].id == l.id:
+						na.laws[k] = lst[i - 1].id
+						hoiRecalc(na)
+	# 2) 顧問：空いた枠に雇う
+	if na.pp >= ADV_COST + 30:
+		var used = {"pol": 0, "staff": 0, "design": 0}
+		for aid in na.advisors:
+			for a in ADVISORS:
+				if a.id == aid: used[a.slot] += 1
+		var best = null
+		var bw = 0.0
+		for a in ADVISORS:
+			if na.advisors.has(a.id) or used[a.slot] >= ADV_SLOTS[a.slot]: continue
+			if a.has("ideo") and not a.ideo.has(na.ideo): continue
+			var w = 1.0 + randf()
+			if a.slot == "staff" or a.slot == "design": w += 1.5 if hot else 0.3
+			if a.m.has("stab") and na.stab < 45: w += 2.0
+			if a.m.has("ws") and na.ws < wsNeedOf(na) and na.ideo != "democracy": w += 1.5
+			if a.m.has("cf") or a.m.has("mf"): w += 0.8
+			if w > bw:
+				bw = w
+				best = a
+		if best != null:
+			na.advisors.append(best.id)
+			na.pp -= ADV_COST
+			hoiRecalc(na)
+			var msg2 = "%s が%s「%s」を迎える" % [na.name, {"pol": "政治顧問", "staff": "参謀", "design": "設計会社"}[best.slot], best.n]
+			if concerns([nid]): logMsg(msg2)
+			chron(msg2, nid, "gov")
+	# 3) 決定
+	for dc in DECISIONS:
+		# 急ぎでない決定は、法律や顧問の分を残せる時だけ
+		var urgent: bool = dc.id == "bonds" or dc.id == "mobil"
+		if na.pp < dc.pp + (30 if urgent else 170): continue
+		if na.decCool.get(dc.id, -99) > G.turn: continue
+		if not _decisionWanted(na, dc.id, war): continue
+		na.pp -= dc.pp
+		na.decCool[dc.id] = G.turn + 15
+		_decide(na, dc)
+		break
+func _decisionWanted(na: Dictionary, id: String, war: bool) -> bool:
+	match id:
+		"border": return not war and (na.ideo == "fascism" or na.ideo == "communism") and na.ws >= wsNeedOf(na) - 10 and randf() < 0.3
+		"bonds": return war and na.gold < 4000
+		"order":
+			var low = 0
+			var own = ownList(na.id)
+			for t in own:
+				if t.sec < 45: low += 1
+			return low > own.size() * 0.2
+		"diplo": return not war and na.ideo == "democracy" and tension() > 40 and randf() < 0.2
+		"mobil": return war and cpuDanger(na.id) >= 0.8
+	return false
+func _decide(na: Dictionary, dc: Dictionary) -> void:
+	var nid: int = na.id
+	match dc.id:
+		"border":
+			var best = null
+			for o in G.nations:
+				if not o.alive or o.id == nid or not nationsAdjacent(nid, o.id) or sameFaction(nid, o.id) or lordOf(o.id) == nid: continue
+				if best == null or nationPower(o.id) < nationPower(best): best = o.id
+			if best == null: return
+			grantCB(nid, best, "国境紛争", 20)
+			addTension(2)
+		"bonds":
+			na.gold += 3000 + ownCount(nid) * 150
+			na.stab = clamp_f(na.stab - 5, 0, 100)
+		"order":
+			for t in ownList(nid): t.sec = clamp_f(t.sec + 15, 0, 100)
+			na.stab = clamp_f(na.stab + 5, 0, 100)
+		"diplo":
+			for o in G.nations:
+				if o.alive and o.id != nid and nationsAdjacent(nid, o.id): addFavor(o.id, nid, 10)
+			addTension(-2)
+		"mobil":
+			for k in na.stock: na.stock[k] = int(na.stock[k] * 1.2)
+			na.stab = clamp_f(na.stab - 5, 0, 100)
+	var msg = "%s が決定「%s」を行う" % [na.name, dc.n]
+	if concerns([nid]): logMsg(msg)
+	chron(msg, nid, "gov")
+
+# ==================== k8c_economy.gd ====================
+# HOI4 を参考にした経済：研究（技術）・装備の世代・資源（鉄・石油）と貿易・消費財
+
+# ---------- 研究 ----------
+## 1段階ごとの効果（5段階まで）。y=その分野の1段階目が出る年（以後1.5年ごと）
+const TECHS := {
+	"inf": {"n": "歩兵装備", "d": "攻撃 +3%・防御 +3%", "m": {"atk": 0.03, "def": 0.03}, "y": 1936},
+	"art": {"n": "砲兵", "d": "攻撃 +5%", "m": {"atk": 0.05}, "y": 1936},
+	"armor": {"n": "機甲", "d": "攻撃 +4%・突撃力 +2%", "m": {"atk": 0.04, "chg": 0.02}, "y": 1937},
+	"ind": {"n": "工業", "d": "軍需・民需工場の出力 +6%", "m": {"mf": 0.06, "cf": 0.06}, "y": 1936},
+	"constr": {"n": "建設", "d": "建設費 -5%", "m": {"build": -0.05}, "y": 1936},
+	"fort": {"n": "築城", "d": "砦の防御 +8%・防御 +2%", "m": {"fort": 0.08, "def": 0.02}, "y": 1936},
+	"log": {"n": "兵站", "d": "消耗 -15%・兵の上限 +5%", "m": {"attr": -0.15, "cap": 0.05}, "y": 1936},
+	"air": {"n": "航空", "d": "空軍力 +20%", "m": {"air": 0.20}, "y": 1936},
+	"naval": {"n": "海軍", "d": "海軍力 +20%", "m": {"navy": 0.20}, "y": 1936},
+}
+const TECH_KEYS := ["inf", "art", "armor", "ind", "constr", "fort", "log", "air", "naval"]
+const TECH_MAX := 5
+const RES_SLOTS := 2
+func techLv(na: Dictionary, k: String) -> int: return int(na.get("tech", {}).get(k, 0))
+func techYear(k: String, lv: int) -> float: return TECHS[k].y + (lv - 1) * 1.5
+func curYear() -> float: return 1936.0 + (G.turn - 1) / 12.0
+func techCost(na: Dictionary, k: String) -> float:
+	var lv = techLv(na, k) + 1
+	var c: float = 60.0 + lv * 30.0
+	if techYear(k, lv) > curYear(): c *= 2.0   # 年代より先の研究は2倍かかる
+	return c
+## 研究の速さ（毎ターン）：民需工場が多いほど速い
+func researchRate(na: Dictionary) -> float:
+	var cf: int = factoryCount(na.id)[1]
+	return 5.0 + cf * 0.6 + nmod(na.id, "rsch") * 10.0
+## 装備の世代（歩兵装備・砲兵・機甲の平均）
+func equipGen(na: Dictionary) -> float: return (techLv(na, "inf") + techLv(na, "art") + techLv(na, "armor")) / 3.0
+func techMods(na: Dictionary, m: Dictionary) -> void:
+	for k in TECH_KEYS:
+		var lv = techLv(na, k)
+		if lv <= 0: continue
+		for x in TECHS[k].m: m[x] = m.get(x, 0.0) + TECHS[k].m[x] * lv
+func researchTurn(na: Dictionary) -> void:
+	if not na.has("tech"): na.tech = {}
+	if not na.has("rsch"): na.rsch = []
+	var rate = researchRate(na)
+	var done = []
+	for r in na.rsch:
+		r.p += rate
+		if r.p >= techCost(na, r.k):
+			na.tech[r.k] = techLv(na, r.k) + 1
+			done.append(r)
+			var msg = "%s が研究「%s %d」を終える" % [na.name, TECHS[r.k].n, na.tech[r.k]]
+			if concerns([na.id]): logMsg(msg)
+			if isMajor(na): chron(msg, na.id, "gov")
+	for r in done: na.rsch.erase(r)
+	if done.size(): hoiRecalc(na)
+	while na.rsch.size() < RES_SLOTS:
+		var k = _pickTech(na)
+		if k == null: break
+		na.rsch.append({"k": k, "p": 0.0})
+func _pickTech(na: Dictionary):
+	var war = inWar(na.id)
+	var best = null
+	var bw = -1.0
+	for k in TECH_KEYS:
+		if techLv(na, k) >= TECH_MAX: continue
+		var busy = false
+		for r in na.rsch:
+			if r.k == k: busy = true
+		if busy: continue
+		var w = 1.0 + randf() * 0.6
+		match na.get("ideo", "neutral"):
+			"fascism": w *= {"armor": 1.8, "art": 1.5, "air": 1.5}.get(k, 1.0)
+			"communism": w *= {"inf": 1.6, "ind": 1.5, "armor": 1.4}.get(k, 1.0)
+			"democracy": w *= {"ind": 1.6, "naval": 1.5, "air": 1.3}.get(k, 1.0)
+			_: w *= {"ind": 1.5, "fort": 1.5, "constr": 1.3}.get(k, 1.0)
+		if war and (k == "inf" or k == "art" or k == "armor"): w *= 1.5
+		if techYear(k, techLv(na, k) + 1) > curYear(): w *= 0.4
+		if k == "naval" and coastCount(na.id) < 3: w *= 0.2
+		if w > bw:
+			bw = w
+			best = k
+	return best
+
+# ---------- 資源（鉄・石油）と貿易 ----------
+const RES_KINDS := {"steel": "鉄", "oil": "石油"}
+## 領地ごとの産出（ゲーム開始時に一度だけ決める。鉄は山や鉄の産地、石油は平地や湿地に多い）
+func resourceInit(g: Dictionary) -> void:
+	for t in g.terrs:
+		if t.has("ress"): continue
+		var r = {}
+		var h: int = abs(hash(str(t.id) + "_" + str(g.get("jpMap", 0)) + "_r"))
+		var tr: String = str(t.get("terrain", "plain"))
+		var steelP: float = 0.10 + (0.25 if tr == "mount" or tr == "hill" else 0.0) + (0.5 if t.get("trait") == "iron" else 0.0)
+		var oilP: float = 0.07 + (0.12 if tr == "plain" or tr == "marsh" else 0.0)
+		if (h % 1000) / 1000.0 < steelP: r.steel = 1 + h % 3
+		if ((h / 1000) % 1000) / 1000.0 < oilP: r.oil = 1 + (h / 7) % 3
+		t.ress = r
+## 国の資源（産出・必要・不足）。必要：軍需工場1つで鉄 1・石油 0.5、機甲の段階ごとに石油 +1
+func resources(nid: int) -> Dictionary:
+	var na = NAT(nid)
+	var have = {"steel": 0.0, "oil": 0.0}
+	for t in ownList(nid):
+		for k in t.get("ress", {}): have[k] += t.ress[k]
+	var mul: float = 1.0 + nmod(nid, "res")
+	for k in have: have[k] *= mul
+	var mf: int = factoryCount(nid)[0]
+	var need = {"steel": mf * 1.0, "oil": mf * 0.5 + techLv(na, "armor") * 1.0}
+	# 通商相手の余りを輸入する
+	var imp = {"steel": 0.0, "oil": 0.0}
+	for p in tradePartners(nid):
+		var ph = {"steel": 0.0, "oil": 0.0}
+		for t in ownList(p):
+			for k in t.get("ress", {}): ph[k] += t.ress[k]
+		var pmf: int = factoryCount(p)[0]
+		var spare = {"steel": ph.steel - pmf * 1.0, "oil": ph.oil - pmf * 0.5}
+		for k in imp: imp[k] += max(0.0, spare[k]) * 0.5
+	var ratio = 1.0
+	for k in need:
+		if need[k] > 0: ratio = min(ratio, (have[k] + imp[k]) / need[k])
+	return {"have": have, "need": need, "imp": imp, "ratio": clamp_f(ratio, 0, 1)}
+## 資源の不足による軍需工場の倍率（足りなければ最低 0.5 倍）
+func resMul(nid: int) -> float:
+	var c = _resCache.get(nid)
+	if c == null or c[0] != G.turn:
+		c = [G.turn, 0.5 + 0.5 * resources(nid).ratio]
+		_resCache[nid] = c
+	return c[1]
+var _resCache = {}
+## その国に足りない資源を、相手が持っているか（戦の狙いに使う）
+func resWant(nid: int, o: int) -> bool:
+	if resMul(nid) >= 0.95: return false
+	for t in ownList(o):
+		if t.get("ress", {}).size(): return true
+	return false
+## 消費財：民需工場の出力のうち国内の消費に取られる割合（経済法で変わる）。標準（30%）で 1.0 倍
+func consumerMul(na: Dictionary) -> float: return clamp_f(1.0 - (consumerShare(na) - 0.30), 0.6, 1.3)
+func coastCount(nid: int) -> int:
+	coastInfo()
+	var n = 0
+	for t in ownList(nid):
+		if COAST.has(t.id): n += 1
+	return n
+
+# ==================== k8d_military.gd ====================
+# HOI4 を参考にした軍事：組織率・消耗・包囲殲滅・攻勢計画・空軍・海軍・将軍の特性・占領地の抵抗
+
+# ---------- 組織率 ----------
+## 0〜100。戦うと下がり、休むと戻る。低いと攻防が落ちる（100で1倍、0で0.6倍）
+func orgOf(a: Dictionary) -> float: return float(a.get("org", 100.0))
+func orgMul(a: Dictionary) -> float: return 0.6 + 0.4 * clamp_f(orgOf(a), 0, 100) / 100.0
+func orgAfterBattle(A: Array, D: Array, winner: String) -> void:
+	for a in A:
+		if a != null: a.org = clamp_f(orgOf(a) - (14.0 if winner == "A" else 26.0), 0, 100)
+	for a in D:
+		if a != null: a.org = clamp_f(orgOf(a) - (14.0 if winner == "D" else 26.0), 0, 100)
+
+# ---------- 毎ターン：組織率の回復・消耗・包囲 ----------
+var _yRange = []
+func _northFrac(t: Dictionary) -> float:
+	if _yRange.is_empty() or _yRange[2] != G:
+		var lo = INF
+		var hi = -INF
+		for x in G.terrs:
+			lo = min(lo, x.y)
+			hi = max(hi, x.y)
+		_yRange = [lo, hi, G]
+	return 1.0 - (t.y - _yRange[0]) / max(1.0, _yRange[1] - _yRange[0])
+func isWinter() -> bool:
+	var m: int = (G.turn - 1) % 12 + 1
+	return m == 12 or m == 1 or m == 2
+func armyUpkeepTurn() -> void:
+	var winter = isWinter()
+	for na in G.nations:
+		if not na.alive: continue
+		var attrMul: float = max(0.2, 1.0 + nmod(na.id, "attr"))
+		for a in na.armies:
+			if a == null or total(a.t) <= 0: continue
+			var t = T(a.at)
+			var home: bool = t.owner == na.id
+			var sup: bool = a.get("sup", true) != false
+			# 組織率の回復
+			a.org = clamp_f(orgOf(a) + (12.0 if home and sup else (6.0 if sup else 1.0)), 0, 100)
+			# 消耗：補給切れ・敵地の山や森や湿地・冬の北国
+			var rate = 0.0
+			if not sup: rate += 0.03
+			if not home and (t.terrain == "mount" or t.terrain == "forest" or t.terrain == "marsh"): rate += 0.01
+			if winter and _northFrac(t) > 0.7 and not home: rate += 0.02
+			rate *= attrMul
+			if rate > 0:
+				for k in TK: a.t[k] = int(a.t[k] * (1.0 - rate))
+			# 包囲：補給が5ターン続けて切れたら降伏する
+			a.cutN = 0 if sup else a.get("cutN", 0) + 1
+			if a.cutN >= 5 and not home:
+				var lost = total(a.t)
+				for k in TK: a.t[k] = 0
+				if a.gen != null:
+					var g = genOf(na, a.gen)
+					if g != null: g.army = null
+				na.armies[a.idx] = null
+				ARMY_REV += 1
+				var msg = "%s の %s が %s で包囲され降伏する（%s人）" % [na.name, a.name, t.name, fmt(lost)]
+				logWar(msg, [na.id, t.owner], "war")
+				chron(msg, na.id, "war")
+				var cap = t.owner
+				if cap >= 0 and cap != na.id: addFavor(na.id, cap, -5)
+
+# ---------- 攻勢計画 ----------
+## 前線全体でこちらが 1.3 倍以上強ければ「全面攻勢」。前線の守備軍も 1.2 倍以上の所から一斉に攻める
+func offensiveCheck(nid: int, frontPow: float, foePow: float) -> void:
+	var na = NAT(nid)
+	var was: bool = na.get("offensive", false)
+	var now: bool = frontPow >= foePow * 1.3 and frontPow > 0
+	if was and frontPow < foePow * 1.1: now = false
+	elif was: now = true
+	na.offensive = now
+	if now and not was:
+		var msg = "%s が全面攻勢を開始する" % na.name
+		if newsworthy([nid]): headline("%s、全面攻勢" % natLabel(nid), "前線の各地で一斉に攻勢へ")
+		if concerns([nid]): logMsg(msg, "war")
+		chron(msg, nid, "war")
+
+# ---------- 空軍・海軍 ----------
+## 空軍力：軍需工場と航空の研究から。戦いでは、制空権を取った側（1.5倍以上）の攻防 +10%
+func airPower(nid: int) -> float: return factoryCount(nid)[0] * (1.0 + nmod(nid, "air"))
+## 海軍力：海に面した領地と海軍の研究から。海峡を越えて攻める時、制海権が無いと攻撃 -25%
+func navyPower(nid: int) -> float: return coastCount(nid) * (1.0 + nmod(nid, "navy"))
+func airEdge(a: int, b: int) -> float:
+	var x = airPower(a)
+	var y = airPower(b)
+	if x >= y * 1.5 and x > 0: return 0.10
+	if y >= x * 1.5 and y > 0: return -0.10
+	return 0.0
+func seaEdgePenalty(att: int, def: int, from: int, to: int) -> float:
+	var e = edgeBetween(from, to)
+	if e == null or not e.get("sea", false): return 0.0
+	return 0.0 if navyPower(att) >= navyPower(def) else -0.25
+
+# ---------- 将軍の特性と昇進 ----------
+const GEN_TRAITS := {
+	"atk": {"n": "攻勢の名手", "d": "率いる軍の攻撃 +8%"},
+	"def": {"n": "守戦の名手", "d": "率いる軍の防御 +8%"},
+	"mount": {"n": "山岳戦", "d": "山・丘での攻防 +10%"},
+	"mob": {"n": "機動戦", "d": "突撃力 +5%"},
+}
+## 勝つたびに経験を積み、3勝ごとに特性を1つ得る。10勝で元帥（攻防 +5%）
+func genAfterBattle(A: Array, D: Array, winner: String, t: Dictionary) -> void:
+	for side in [[A, "A"], [D, "D"]]:
+		if side[1] != winner: continue
+		for a in side[0]:
+			if a == null or a.gen == null: continue
+			var g = genOf(NAT(a.owner), a.gen)
+			if g == null: continue
+			g.vic = g.get("vic", 0) + 1
+			if not g.has("traits"): g.traits = []
+			if g.vic % 3 == 0 and g.traits.size() < 3:
+				var cand = []
+				for k in GEN_TRAITS:
+					if not g.traits.has(k): cand.append(k)
+				if side[1] == "A" and cand.has("atk"): cand.append("atk")
+				if side[1] == "D" and cand.has("def"): cand.append("def")
+				if (t.terrain == "mount" or t.terrain == "hill") and cand.has("mount"): cand.append("mount")
+				if cand.size():
+					var k = cand[randi() % cand.size()]
+					g.traits.append(k)
+					chron("%s の将軍 %s が「%s」を身につける" % [NAT(a.owner).name, g.get("name", "?"), GEN_TRAITS[k].n], a.owner, "war")
+			if g.vic == 10:
+				g.marshal = true
+				chron("%s の将軍 %s が元帥に昇進する" % [NAT(a.owner).name, g.get("name", "?")], a.owner, "war")
+func genTraitMods(a: Dictionary, t: Dictionary) -> Dictionary:
+	var r = {"atk": 0.0, "def": 0.0, "chg": 0.0}
+	if a.gen == null: return r
+	var g = genOf(NAT(a.owner), a.gen)
+	if g == null: return r
+	for k in g.get("traits", []):
+		match k:
+			"atk": r.atk += 0.08
+			"def": r.def += 0.08
+			"mob": r.chg += 0.05
+			"mount":
+				if t.terrain == "mount" or t.terrain == "hill":
+					r.atk += 0.10
+					r.def += 0.10
+	if g.get("marshal", false):
+		r.atk += 0.05
+		r.def += 0.05
+	return r
+
+# ---------- 占領地の抵抗と協力 ----------
+## 本土でない領地（取った土地）は、協力度（0〜100）が低いうちは生産が落ち、治安も下がる。協力度は毎ターン少しずつ上がる
+func collabOf(t: Dictionary) -> float:
+	if t.owner < 0 or t.get("home", -1) == t.owner: return 100.0
+	return float(t.get("collab", 0.0))
+func occMul(t: Dictionary) -> float: return 0.5 + 0.5 * collabOf(t) / 100.0
+func occupationTurn() -> void:
+	for t in G.terrs:
+		if t.owner < 0 or t.get("home", -1) == t.owner: continue
+		var c: float = t.get("collab", 0.0)
+		var na = NAT(t.owner)
+		var rate: float = 2.0 + (1.0 if na.get("ideo") == "fascism" or na.get("ideo") == "communism" else 0.0)
+		t.collab = clamp_f(c + rate, 0, 100)
+		if c < 30: t.sec = clamp_f(t.sec - 2, 0, 100)
+
+# ==================== k8e_diplo.gd ====================
+# HOI4 を参考にした外交：内戦・義勇軍・レンドリース（軍需品の供与）・陣営への加盟申請
+
+# ---------- 内戦 ----------
+## 安定度がとても低い時に政変が起きると、すぐには政権が変わらず内戦になる。
+## 内戦の間は兵の生産・ゴールドが落ち、一部の領地が混乱する。終わる時、支持の多い側が政権を取る
+const CIVIL_TURNS := 12
+func startCivilWar(na: Dictionary, rebel: String) -> void:
+	if na.has("civil"): return
+	na.civil = {"side": rebel, "end": G.turn + CIVIL_TURNS}
+	_addSpirit(na, "内戦", "兵の生産 -30%・ゴールド -30%・安定度 -10", {"troop": -0.30, "gold": -0.30, "stab": -10.0}, "内戦")
+	var own = ownList(na.id)
+	var cap = T(na.capital)
+	var far = own.duplicate()
+	far.sort_custom(func(a, b): return Vector2(a.x, a.y).distance_to(Vector2(cap.x, cap.y)) > Vector2(b.x, b.y).distance_to(Vector2(cap.x, cap.y)))
+	for i in int(far.size() * 0.3):
+		far[i].chaos = max(far[i].chaos, 4)
+		far[i].sec = clamp_f(far[i].sec - 25, 0, 100)
+	var msg = "%s で内戦が始まる — %s 政権 対 %s 派" % [na.name, IDEO[na.ideo].n, IDEO[rebel].n]
+	headline("%s で内戦" % natLabel(na.id), "%s 政権 対 %s 派" % [IDEO[na.ideo].n, IDEO[rebel].n])
+	logMsg(msg, "war")
+	chron(msg, na.id, "war")
+	addTension(4)
+func civilWarTurn(na: Dictionary) -> void:
+	var cw = na.get("civil")
+	if cw == null: return
+	# 同じ思想の国が反乱側・政府側を支援する（支持が動く）
+	for o in G.nations:
+		if not o.alive or o.id == na.id or not natNear(o.id, na.id) or not o.has("ideo"): continue
+		if o.ideo == cw.side: na.ipop[cw.side] = na.ipop.get(cw.side, 0.0) + 0.6
+		elif o.ideo == na.ideo: na.ipop[na.ideo] = na.ipop.get(na.ideo, 0.0) + 0.6
+	_normPop(na)
+	if G.turn < cw.end: return
+	na.erase("civil")
+	_rmSpirit(na, "内戦")
+	var win: String = cw.side if na.ipop.get(cw.side, 0.0) >= na.ipop.get(na.ideo, 0.0) else na.ideo
+	var msg = "%s の内戦が終わる — %s" % [na.name, ("%s 派が勝ち、政権を取る" % IDEO[win].n) if win != na.ideo else "政府が反乱を抑える"]
+	logMsg(msg, "war")
+	chron(msg, na.id, "war")
+	if win != na.ideo: setGov(na, win, "内戦")
+	else: na.ipop[cw.side] = na.ipop.get(cw.side, 0.0) * 0.5
+	_normPop(na)
+
+# ---------- 義勇軍・レンドリース ----------
+## 毎ターン、国ごとに：戦争していない国が、戦争中の同じ思想の国へ義勇軍（兵）を、
+## 軍需品に余裕のある国が、戦争中の同じ陣営・同じ思想の国へ軍需品を送る
+func supportTurn(na: Dictionary) -> void:
+	var nid: int = na.id
+	if not na.has("supCool"): na.supCool = {}
+	var war = inWar(nid)
+	for o in G.nations:
+		if not o.alive or o.id == nid or not inWar(o.id) or atWar(nid, o.id): continue
+		if na.supCool.get(o.id, -99) > G.turn: continue
+		var sameIdeo: bool = o.get("ideo") == na.get("ideo")
+		var sameFac = sameFaction(nid, o.id)
+		if not sameIdeo and not sameFac: continue
+		if not natNear(nid, o.id): continue
+		# 義勇軍：自分は戦争しておらず、戦争支持が 30 以上
+		if not war and sameIdeo and na.ws >= 30 and total(na.stock) > 4000 and randf() < 0.10:
+			var sent = 0
+			for k in TK:
+				var n = int(na.stock[k] * 0.08)
+				na.stock[k] -= n
+				o.stock[k] += n
+				sent += n
+			if sent > 0:
+				na.supCool[o.id] = G.turn + 18
+				var msg = "%s が %s へ義勇軍 %s人 を送る" % [na.name, o.name, fmt(sent)]
+				if concerns([nid, o.id]): logMsg(msg)
+				chron(msg, nid, "dip")
+				addFavor(o.id, nid, 8)
+				continue
+		# レンドリース：軍需品に余裕がある
+		if na.get("eq", 0) > 9000 and (sameFac or na.get("ideo") == "democracy") and randf() < 0.15:
+			var give: int = int(min(na.eq * 0.2, 6000))
+			na.eq -= give
+			o.eq = o.get("eq", 0) + give
+			na.supCool[o.id] = G.turn + 12
+			var msg2 = "%s が %s へ軍需品 %s を供与する（レンドリース）" % [na.name, o.name, fmt(give)]
+			if concerns([nid, o.id]): logMsg(msg2)
+			chron(msg2, nid, "dip")
+			addFavor(o.id, nid, 6)
+
+# ---------- 陣営への加盟申請 ----------
+## 陣営に入っていない国が、思想の合う近くの陣営に加盟を申請し、盟主が受け入れを決める
+func factionApplyTurn(na: Dictionary) -> void:
+	var nid: int = na.id
+	if facOf(nid) != null or lordOf(nid) != null or randf() > 0.04: return
+	var best = null
+	var bs = -INF
+	for F in G.get("factions", {}).values():
+		if not NAT(F.leader).alive or not facFit(nid, F.leader): continue
+		var near = false
+		var war = false
+		for m in F.members:
+			if natNear(m, nid): near = true
+			if atWar(m, nid): war = true
+		if not near or war: continue
+		var s: float = favorOf(nid, F.leader) + (25 if NAT(F.leader).get("ideo") == na.get("ideo") else 0) + cpuDanger(nid) * 30
+		if s > bs:
+			bs = s
+			best = F
+	if best == null or bs < 40: return
+	var ok: bool = favorOf(best.leader, nid) >= 30 and best.members.size() < 8
+	var msg = "%s が「%s」への加盟を申請し、%s" % [na.name, best.name, "認められる" if ok else "断られる"]
+	if concerns([nid, best.leader]): logMsg(msg, "good" if ok else "")
+	chron(msg, nid, "dip")
+	if ok: joinFaction(best, nid)
+	else: addFavor(nid, best.leader, -5)
+
+# ---------- 新聞の見出し ----------
+## 大きな出来事を「国盗り新報」の見出しとして画面に出す（止めずに流す）
+signal news(head: String, sub: String)
+func headline(head: String, sub := "") -> void:
+	if G == null: return
+	news.emit(head, sub)
+## 大国（固有の大きな方針ツリーを持つ国）か、選んだ国が関わるか
+func newsworthy(ids: Array) -> bool:
+	for i in ids:
+		if i >= 0 and i < G.nations.size() and (isMajor(NAT(i)) or concerns([i])): return true
+	return false
+func natLabel(nid: int) -> String:
+	var na = NAT(nid)
+	var r: String = na.get("role", "")
+	return ("%s（%s）" % [r, na.name.trim_suffix("県").trim_suffix("都").trim_suffix("府")]) if r != "" else na.name
+
+# ---------- 歴史イベント：ミュンヘン会談 ----------
+## ドイツ（群馬）がチェコスロバキア（栃木）に併合を要求すると、イギリス（東京）が宥和か対決かを選ぶ
+func munichEvent(ger: int, cze: int) -> String:
+	var uk = natByName("東京都")
+	var fr = natByName("長野県")
+	if uk < 0 or NAT(uk).get("ideo") != "democracy": return ""
+	var ukna = NAT(uk)
+	var firm: float = 0.35 + (0.4 if ukna.focus.done.has("b3") else 0.0) - (0.3 if ukna.focus.done.has("b2") else 0.0) + (tension() - 40) / 200.0
+	var stand: bool = randf() < clamp_f(firm, 0.05, 0.95)
+	if stand:
+		for g in [uk, fr]:
+			if g >= 0 and not NAT(g).get("guar", []).has(cze):
+				if not NAT(g).has("guar"): NAT(g).guar = []
+				NAT(g).guar.append(cze)
+		headline("ミュンヘン会談、決裂", "%s は %s の要求を拒み、%s の独立を保証" % [natLabel(uk), natLabel(ger), natLabel(cze)])
+		chron("ミュンヘン会談：%s は宥和を拒み、%s の独立を保証する" % [NAT(uk).name, NAT(cze).name], uk, "dip")
+		return "stand"
+	headline("ミュンヘン会談、宥和で妥結", "%s は %s の要求を認める —「我らの時代の平和」" % [natLabel(uk), natLabel(ger)])
+	chron("ミュンヘン会談：%s は %s の要求を認める（宥和）" % [NAT(uk).name, NAT(ger).name], uk, "dip")
+	return "appease"
 
 # ==================== k9_data.gd ====================
 # HOI4を参考にした歴史IFのデータ：思想（政党）・国民精神・国家方針ツリー
@@ -6251,3 +7052,16 @@ const GENERIC_SPIRITS := [
 	["軍国の伝統", "兵の生産 +10%", {"troop": 0.10}],
 	["守りの民", "防御 +8%", {"def": 0.08}],
 ]
+
+## 政体による国名（大国）。ほかの国は共産主義で「〜人民共和国」
+const ROLE_NAMES := {
+	"群馬県": {"democracy": "ドイツ国", "fascism": "大ドイツ国", "communism": "ドイツ社会主義共和国", "neutral": "ドイツ帝国"},
+	"北海道": {"communism": "ソ連", "fascism": "ロシア国", "democracy": "ロシア共和国", "neutral": "ロシア帝国"},
+	"東京都": {"democracy": "イギリス", "fascism": "大英連合", "communism": "ブリテン人民共和国", "neutral": "イギリス王国"},
+	"長野県": {"democracy": "フランス", "fascism": "フランス国", "communism": "フランス・コミューン", "neutral": "フランス王国"},
+	"愛知県": {"fascism": "イタリア帝国", "democracy": "イタリア共和国", "communism": "イタリア人民共和国", "neutral": "イタリア王国"},
+	"大阪府": {"democracy": "アメリカ", "fascism": "アメリカ国", "communism": "アメリカ人民共和国", "neutral": "アメリカ合衆国"},
+	"福岡県": {"neutral": "日本帝国", "fascism": "大日本帝国", "democracy": "日本国", "communism": "日本人民共和国"},
+	"広島県": {"neutral": "中華民国", "communism": "中華人民共和国", "fascism": "中華国民政府", "democracy": "中華連邦"},
+	"京都府": {"democracy": "スペイン共和国", "fascism": "スペイン国", "communism": "スペイン人民共和国", "neutral": "スペイン王国"},
+}

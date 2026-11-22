@@ -309,3 +309,16 @@ const GENERIC_SPIRITS := [
 	["軍国の伝統", "兵の生産 +10%", {"troop": 0.10}],
 	["守りの民", "防御 +8%", {"def": 0.08}],
 ]
+
+## 政体による国名（大国）。ほかの国は共産主義で「〜人民共和国」
+const ROLE_NAMES := {
+	"群馬県": {"democracy": "ドイツ国", "fascism": "大ドイツ国", "communism": "ドイツ社会主義共和国", "neutral": "ドイツ帝国"},
+	"北海道": {"communism": "ソ連", "fascism": "ロシア国", "democracy": "ロシア共和国", "neutral": "ロシア帝国"},
+	"東京都": {"democracy": "イギリス", "fascism": "大英連合", "communism": "ブリテン人民共和国", "neutral": "イギリス王国"},
+	"長野県": {"democracy": "フランス", "fascism": "フランス国", "communism": "フランス・コミューン", "neutral": "フランス王国"},
+	"愛知県": {"fascism": "イタリア帝国", "democracy": "イタリア共和国", "communism": "イタリア人民共和国", "neutral": "イタリア王国"},
+	"大阪府": {"democracy": "アメリカ", "fascism": "アメリカ国", "communism": "アメリカ人民共和国", "neutral": "アメリカ合衆国"},
+	"福岡県": {"neutral": "日本帝国", "fascism": "大日本帝国", "democracy": "日本国", "communism": "日本人民共和国"},
+	"広島県": {"neutral": "中華民国", "communism": "中華人民共和国", "fascism": "中華国民政府", "democracy": "中華連邦"},
+	"京都府": {"democracy": "スペイン共和国", "fascism": "スペイン国", "communism": "スペイン人民共和国", "neutral": "スペイン王国"},
+}

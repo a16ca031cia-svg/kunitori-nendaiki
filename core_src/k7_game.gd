@@ -157,6 +157,9 @@ func loadSlot(i: int) -> bool:
 		for n in g.nations:
 			n.erase("ideo")
 		hoiInit(g)
+	for n in g.nations:
+		if n.has("ideo"): politicsInit(n)
+	resourceInit(g)
 	resetColors(g.get("ncol", null))
 	stopAuto()
 	G = g

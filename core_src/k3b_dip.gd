@@ -153,6 +153,7 @@ func declareWar(a: int, b: int, _byPlayer := false) -> void:
 	G.declN = G.get("declN", 0) + 1
 	warInit(a, b, cpuWarGoal(a, b))
 	var msg := "%s が %s に宣戦布告（目標：%s）" % [NAT(a).name, NAT(b).name, goalLabel(a, b)]
+	if newsworthy([a, b]): headline("%s、%s に宣戦布告" % [natLabel(a), natLabel(b)], "目標：%s" % goalLabel(a, b))
 	logMsg(msg, "war")
 	chron(msg, a, "dip")
 	var note := ("同盟を破っての開戦／" if wasAlly else "") + (("大義：" + why) if why != "" else "大義なき開戦（国内の治安・諸国の評判が大きく下がる）") + "／目標：" + goalLabel(a, b)
@@ -221,6 +222,14 @@ func shareWars(a: int, b: int) -> void:
 			enterWar(y, o.id, "%s との同盟により参戦" % NAT(x).name, warOf(x, o.id))
 func enterWar(a: int, b: int, why: String, wid: int) -> void:
 	if a == b or atWar(a, b) or not NAT(a).alive or not NAT(b).alive: return
+	# 1つの戦争で片方に加わる国は、主役を含めて4か国まで（遠くの国まで一斉に袋だたきにする連鎖を防ぐ）。属国は主君に従う
+	if wid and G.wars.has(wid):
+		var Wj: Dictionary = G.wars[wid]
+		var mySide: Array = Wj.sB if Wj.sA.has(b) else Wj.sA
+		var bound := false
+		for m in mySide:
+			if isVassal(a, m): bound = true
+		if mySide.size() >= WAR_SIDE_MAX and not bound: return
 	setRel(a, b, "war")
 	if wid and G.wars.has(wid): joinSide(wid, a, b)
 	else: newWar(a, b)
@@ -232,6 +241,7 @@ func enterWar(a: int, b: int, why: String, wid: int) -> void:
 	logMsg(msg, "war")
 	chron(msg, a, "dip")
 	dipReport("join", a, b, true, why)
+const WAR_SIDE_MAX := 4
 func _joinCamp(x: int, y: int, attacker: bool) -> void:
 	for id in campOf(x):
 		if id == x or id == y: continue

@@ -473,6 +473,7 @@ func makeFaction(n: int, name0 := "") -> void:
 	G.factions[id] = {"id": id, "name": nm, "leader": n, "members": [n], "t0": G.turn}
 	NAT(n).faction = id
 	var msg := "%s が「%s」を結成する" % [NAT(n).name, nm]
+	headline("「%s」結成" % nm, "盟主 %s" % natLabel(n))
 	logMsg(msg, "good")
 	chron(msg, n, "dip")
 	dipReport("faction", n, n, true, "盟主として近くの国を招きます")

@@ -71,6 +71,7 @@ func _ready() -> void:
 	spdPick.select(S.UI.speed)
 	S.log_changed.connect(_renderLog)
 	S.notified.connect(_toast)
+	S.news.connect(_queueNews)
 	S.refreshed.connect(refresh)
 	S.beat.connect(_onBeat)
 	_setupAudio()
@@ -292,6 +293,19 @@ func _buildUI() -> void:
 		zb.add_child(b)
 	mapWrap.add_child(zb)
 	mapWrap.resized.connect(func(): zb.position = Vector2(mapWrap.size.x - 48, mapWrap.size.y - 160))
+	# 地図の表示の切り替え（M キーでも）
+	modeBar = HBoxContainer.new()
+	modeBar.add_theme_constant_override("separation", 2)
+	for md in map.MAP_MODES:
+		var key: String = md[0]
+		var mb = _btn(md[1], func(): _setMapMode(key))
+		mb.custom_minimum_size = Vector2(40, 26)
+		mb.toggle_mode = true
+		mb.set_meta("mode", key)
+		modeBar.add_child(mb)
+	mapWrap.add_child(modeBar)
+	mapWrap.resized.connect(func(): modeBar.position = Vector2(mapWrap.size.x - modeBar.size.x - 10, 10))
+	_syncModeBar()
 	tip = PanelContainer.new()
 	tip.add_theme_stylebox_override("panel", _sb(Color(C_PANEL, 0.96), C_LINE2, 1, 3, 5))
 	tip.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -741,6 +755,52 @@ func _onHover(id: int, p: Vector2) -> void:
 # ============================================================
 #   右の欄
 # ============================================================
+var modeBar: HBoxContainer
+func _setMapMode(m: String) -> void:
+	map.setMapMode(m)
+	_syncModeBar()
+func _syncModeBar() -> void:
+	if modeBar == null: return
+	for b in modeBar.get_children(): b.button_pressed = b.get_meta("mode") == S.UI.get("mapMode", "pol")
+## 新聞の見出し（国盗り新報）：地図の上の中央に、順番に数秒ずつ出す
+var _newsQ = []
+var _newsBusy = false
+var _newsBox: PanelContainer = null
+func _queueNews(head: String, sub: String) -> void:
+	_newsQ.append([head, sub, S.dateStr(S.G.turn) if S.G != null else ""])
+	while _newsQ.size() > 4: _newsQ.pop_front()
+	if not _newsBusy: _runNews()
+func _runNews() -> void:
+	_newsBusy = true
+	while _newsQ.size():
+		var n = _newsQ.pop_front()
+		if _newsBox == null or not is_instance_valid(_newsBox):
+			_newsBox = PanelContainer.new()
+			var sb = _sb(Color("#e9e1cf"), Color("#3a3020"), 2, 2, 10)
+			_newsBox.add_theme_stylebox_override("panel", sb)
+			_newsBox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			_newsBox.custom_minimum_size = Vector2(360, 0)
+			var l = _rtl()
+			l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			_newsBox.add_child(l)
+			toastBox.get_parent().add_child(_newsBox)
+		var lbl: RichTextLabel = _newsBox.get_child(0)
+		lbl.text = "[center][font=res://fonts/ShipporiMinchoB1-SemiBold.ttf][font_size=11][color=#5a4a30]━ 国盗り新報 ━　%s[/color][/font_size]
+[font_size=21][color=#1b1710]%s[/color][/font_size][/font]%s[/center]" % [n[2], _esc(n[0]), ("
+[font_size=12][color=#4a3f2c]%s[/color][/font_size]" % _esc(n[1])) if n[1] != "" else ""]
+		_newsBox.modulate.a = 1.0
+		_newsBox.visible = true
+		await get_tree().process_frame
+		_newsBox.reset_size()
+		_newsBox.position = Vector2((_newsBox.get_parent().size.x - _newsBox.size.x) / 2, 50)
+		var stay: float = [5.0, 3.5, 2.2, 1.2][clamp(S.UI.speed, 0, 3)]
+		await get_tree().create_timer(stay).timeout
+		if not is_instance_valid(_newsBox): break
+		var tw = create_tween()
+		tw.tween_property(_newsBox, "modulate:a", 0.0, 0.3)
+		await tw.finished
+	if is_instance_valid(_newsBox): _newsBox.visible = false
+	_newsBusy = false
 var _sideLast = ""
 func _renderSide() -> void:
 	var h = ""
@@ -790,6 +850,9 @@ func worldPanel() -> String:
 	var mx = 1
 	for n in alive: mx = max(mx, cnt.get(n.id, 0))
 	var s = _h3("天下の情勢") + _chip("%dターン目" % S.G.turn)
+	var wt: float = S.tension()
+	s += "
+" + _kv([["世界の緊張", "%s [color=#%s]%d　%s[/color] [font_size=11][color=#9b9484]（高いほど各国が戦争に踏み切りやすい）[/color][/font_size]" % [_meter(wt, "#c0504a"), "c0504a" if wt >= 70 else ("d29b3c" if wt >= 45 else "9b9484"), int(wt), S.tensionLabel(wt)]]])
 	s += _lbl("領地の多い国（▲▼＝この10ターンの増減）") + "\n"
 	s += "[table=4]"
 	for i in min(10, alive.size()):
@@ -1102,7 +1165,7 @@ func _bodyText(bb: String) -> RichTextLabel:
 func confirmModal(title: String, text: String, cb: Callable) -> void:
 	modal(title, _bodyText(text), [_btn("やめる", closeModal), _btn("実行する", func(): closeModal(); cb.call(), true)], 440)
 func openHelp() -> void:
-	var rows = [["スペース", "1ターン進める"], ["A", "自動進行の開始／停止"], ["[　]", "速さを下げる／上げる"], ["R", "記録（年代記・統計）を開く"], ["F", "全体を表示"], ["C", "選んだ国の全体を表示"], ["G", "選んだ国の国家方針ツリー"],
+	var rows = [["スペース", "1ターン進める"], ["A", "自動進行の開始／停止"], ["[　]", "速さを下げる／上げる"], ["R", "記録（年代記・統計）を開く"], ["F", "全体を表示"], ["C", "選んだ国の全体を表示"], ["G", "選んだ国の国家方針ツリー"], ["M", "地図の表示を切り替える（国・思想・陣営・補給・地形）"],
 		["＋　－", "拡大／縮小（ホイール・二本指でも）"], ["矢印キー", "地図を動かす（ドラッグでも）"], ["Esc", "窓を閉じる・戦闘を飛ばす／国の選択を外す"], ["?", "この画面"]]
 	var s = "[color=#9b9484]すべての国をCPUが動かします。気になる国を選んで、その国の目線で興亡を見届けてください。[/color]\n\n[table=2]"
 	for r in rows: s += "[cell][b][color=#e6c95a]%s[/color][/b]　[/cell][cell]%s[/cell]" % [_esc(r[0]), r[1]]
@@ -1114,7 +1177,16 @@ func openHelp() -> void:
 ・[color=#eae4d6]思想[/color]：民主主義・共産主義・ファシズム・非同盟。政権を握る思想で国のふるまい（攻め方・条約・同盟）が決まる。支持の多い思想が安定度の低い時に政変で政権を取る
 ・[color=#eae4d6]安定度[/color]：高いほど生産と治安が上がる。[color=#eae4d6]戦争支持[/color]：思想ごとの値に届かないと宣戦しない（民主主義は大義も要る）。ファシズムは方針で領有権を主張し、併合を要求し、断られれば攻め込む
 ・[color=#eae4d6]国家方針[/color]：共通の枝（産業・軍事・政治・外交）と県ごとの固有の枝。達成すると国民精神・工場などが手に入る（G キーでツリー）
-・[color=#eae4d6]工場[/color]：軍需工場は軍需品を作り、兵の生産に使う（足りないと兵の生産が落ちる）。民需工場はゴールドを生み、建設費を下げる[/color][/font_size]"
+・[color=#eae4d6]工場[/color]：軍需工場は軍需品を作り、兵の生産に使う（足りないと兵の生産が落ちる）。民需工場はゴールドを生み、建設費を下げる
+・[color=#eae4d6]世界の緊張[/color]：時代が進み、宣戦や併合があるほど高まり、各国が戦争に踏み切りやすくなる
+・[color=#eae4d6]政治[/color]：指導者（政変で交代）、国家法（徴兵法・経済法・貿易法。経済法で消費財の割合が変わる）、顧問（政治顧問・参謀・設計会社）、決定。どれも政治力を使う
+・[color=#eae4d6]研究[/color]：歩兵装備・砲兵・機甲・工業・建設・築城・兵站・航空・海軍。年代より先の研究は時間がかかる
+・[color=#eae4d6]資源[/color]：鉄と石油。足りないと軍需工場の出力が落ちる。通商相手の余りを輸入でき、足りない国は資源のある隣国を狙う
+・[color=#eae4d6]軍[/color]：組織率（戦うと下がり休むと戻る）、消耗（補給切れ・敵地の山や森・冬の北国）、包囲（補給が5ターン切れると降伏）、前線（脅威に応じて軍を回す）、全面攻勢、将軍の特性と元帥
+・[color=#eae4d6]空と海[/color]：空軍力が1.5倍以上なら制空権で攻防 +10%。海峡を越えて攻める時、海軍力で劣ると攻撃 -25%
+・[color=#eae4d6]占領地[/color]：取った土地は協力度が上がるまで生産が落ちる。本土を守る時は防御 +25%
+・[color=#eae4d6]外交[/color]：内戦、義勇軍、レンドリース（軍需品の供与）、陣営への加盟申請、独立の保証、ミュンヘン会談
+・[color=#eae4d6]地図[/color]：右上のボタンか M キーで 国・思想・陣営・補給・地形 を切り替え。大きな出来事は新聞の見出しで出る[/color][/font_size]"
 	s += "
 
 [font_size=11][color=#9b9484]音：戦時の曲「Taiko drums (seamless loop)」jobro（CC-BY 3.0・OpenGameArt）／平時の曲「Asianoriental1」Tozan、効果音 Kenney・StarNinjas ほか（CC0）[/color][/font_size]"
@@ -1444,6 +1516,9 @@ func _unhandled_input(ev: InputEvent) -> void:
 		KEY_F: map.fitView()
 		KEY_C: if S.UI.selNat != null: map.frameNation(S.UI.selNat)
 		KEY_G: if S.UI.selNat != null: openFocus(S.UI.selNat)
+		KEY_M:
+			var ms: Array = map.MAP_MODES.map(func(x): return x[0])
+			_setMapMode(ms[(ms.find(S.UI.get("mapMode", "pol")) + 1) % ms.size()])
 		KEY_EQUAL, KEY_PLUS, KEY_KP_ADD, KEY_SEMICOLON: map.zoomAt(1.25, map.size.x / 2, map.size.y / 2)
 		KEY_MINUS, KEY_KP_SUBTRACT: map.zoomAt(0.8, map.size.x / 2, map.size.y / 2)
 		KEY_BRACKETLEFT:
@@ -1718,8 +1793,22 @@ func _balance(runs: int, turns: int) -> void:
 		S.newGame("japan")
 		var warSum = 0
 		var inwSum = 0
+		var capW = [0]
+		var capCb = func(_t, _n, _o): capW[0] += 1
+		S.captured.connect(capCb)
+		var declW = 0
 		for k in turns:
 			await S.endTurn()
+			if OS.get_environment("KN_TIMELINE") != "" and S.G.turn % 50 == 1 and S.G.turn > 1:
+				var alv = 0
+				for n in S.G.nations:
+					if n.alive: alv += 1
+				var gm = 0
+				for t in S.G.terrs:
+					if t.owner == 9: gm += 1
+				print("  T%d までの50ターン：占領 %d・宣戦 %d・いま戦争 %d件・残る国 %d・群馬 %d領地・緊張 %d・最大の脅威 %s・群馬の脅威 %d" % [S.G.turn - 1, capW[0], S.G.get("declN", 0) - declW, S.G.wars.size(), alv, gm, int(S.tension()), S.NAT(S.topThreat().id).name if S.topThreat() != null else "なし", int(S.threatOf(9))])
+				capW[0] = 0
+				declW = S.G.get("declN", 0)
 			if OS.get_environment("KN_TRACE") != "" and S.G.turn % 10 == 0:
 				var tn = -1
 				for n in S.G.nations:
@@ -1761,6 +1850,7 @@ func _balance(runs: int, turns: int) -> void:
 		print("  国力：北海道 %d位（中央値の%.2f倍）1位 %s（%.2f倍）" % [hkp, S.nationPower(0) / max(1.0, med), S.NAT(pw[0][0]).name, pw[0][1] / max(1.0, med)])
 		var line = "run%d T%d 宣戦=%d 交戦組=%.1f 戦争中の国=%.1f 滅亡=%d 北海道=%d位(%d領地) 上位=" % [r, S.G.turn, decl, warSum / float(turns), inwSum / float(turns), dead, hk, cnt.get(0, 0)]
 		for i in min(5, ids.size()): line += "%s%d " % [S.NAT(ids[i]).name, cnt[ids[i]]]
+		S.captured.disconnect(capCb)
 		print(line)
 		var ms = "  "
 		for nm in ["群馬県", "北海道", "東京都", "長野県", "愛知県", "大阪府", "福岡県", "広島県", "京都府"]:
@@ -1780,7 +1870,7 @@ func _balance(runs: int, turns: int) -> void:
 			for n in S.G.nations:
 				if n.name == OS.get_environment("KN_TRACE"): gid = n.id
 			for c in S.G.chron:
-				if c.n == gid or c.s.contains(S.NAT(gid).name): print("    T%d %s" % [c.t, c.s])
+				if OS.get_environment("KN_TRACE") == "*" or c.n == gid or (gid >= 0 and c.s.contains(S.NAT(gid).name)): print("    T%d %s" % [c.t, c.s])
 		tot.decl += decl; tot.wars += warSum / float(turns); tot.dead += dead; tot.hkRank += hk
 		tot.hkShare += cnt.get(0, 0) / float(S.G.terrs.size()); tot.topShare += cnt[ids[0]] / float(S.G.terrs.size())
 	print("AVG 宣戦=%.1f 平均戦争=%.1f 滅亡=%.1f 北海道の順位=%.1f 北海道の割合=%.2f 1位の割合=%.2f" % [tot.decl / runs, tot.wars / runs, tot.dead / runs, tot.hkRank / runs, tot.hkShare / runs, tot.topShare / runs])
@@ -1806,7 +1896,37 @@ func _hoiPanel(nid: int) -> String:
 	rows.append(["安定度", "%s [color=#%s]%d%%[/color] [font_size=11][color=#9b9484]生産 ×%.2f[/color][/font_size]" % [_meter(na.stab, "#" + stc), stc, int(round(na.stab)), S.stabMul(na)]])
 	var ok = na.ws >= I.wsNeed
 	rows.append(["戦争支持", "%s [color=#%s]%d%%[/color] [font_size=11][color=#9b9484]宣戦に %d%% 要る%s[/color][/font_size]" % [_meter(na.ws, "#c0504a"), "e6c95a" if ok else "9b9484", int(round(na.ws)), I.wsNeed, "・大義も要る" if na.ideo == "democracy" else ""]])
+	if na.has("leader"):
+		var ltr = S.leaderTrait(na)
+		rows.append(["指導者", "%s %s [font_size=11][color=#9b9484]%s[/color][/font_size]" % [S.leaderTitle(na), _esc(na.leader.n), ("（%s：%s）" % [ltr.n, ltr.d]) if ltr != null else ""]])
+	if na.has("civil"): rows.append([_cs("内戦", C_DANGER), _cs("%s 派と戦っている（あと%dターン）" % [S.IDEO[na.civil.side].n, max(0, na.civil.end - S.G.turn)], C_DANGER)])
 	rows.append(["政治力", "%d" % int(na.pp)])
+	if na.has("laws"):
+		var lw = []
+		for k in S.LAW_KEYS:
+			var l = S.lawOf(na, k)
+			lw.append("%s [b]%s[/b]" % [S.LAWS[k].n, l.n])
+		rows.append(["国家法", "[font_size=12]%s[/font_size]
+[font_size=11][color=#9b9484]消費財 %d%%（民需工場の出力 ×%.2f）[/color][/font_size]" % ["・".join(lw), int(S.consumerShare(na) * 100), S.consumerMul(na)]])
+	if na.get("advisors", []).size():
+		var ad = []
+		for aid in na.advisors:
+			for a in S.ADVISORS:
+				if a.id == aid: ad.append("%s [font_size=11][color=#9b9484]（%s）[/color][/font_size]" % [a.n, a.d])
+		rows.append(["顧問", "
+".join(ad)])
+	if na.has("tech"):
+		var rs = []
+		for r in na.get("rsch", []):
+			rs.append("%s %d [font_size=11][color=#9b9484]%d%%[/color][/font_size]" % [S.TECHS[r.k].n, S.techLv(na, r.k) + 1, int(r.p * 100.0 / max(1.0, S.techCost(na, r.k)))])
+		var lvs = []
+		for k in S.TECH_KEYS:
+			if S.techLv(na, k) > 0: lvs.append("%s%d" % [S.TECHS[k].n, S.techLv(na, k)])
+		rows.append(["研究", ("研究中：" + "・".join(rs) if rs.size() else "研究中のものなし") + "
+[font_size=11][color=#9b9484]%s　装備の世代 %.1f[/color][/font_size]" % ["・".join(lvs) if lvs.size() else "まだ何も研究していない", S.equipGen(na)]])
+	var rc = S.resources(nid)
+	rows.append(["資源", "鉄 %d/%d・石油 %d/%d %s" % [int(rc.have.steel + rc.imp.steel), int(rc.need.steel), int(rc.have.oil + rc.imp.oil), int(rc.need.oil), ("[font_size=11][color=#c0504a]不足：軍需工場の出力 ×%.2f[/color][/font_size]" % S.resMul(nid)) if S.resMul(nid) < 0.99 else "[font_size=11][color=#9b9484]（輸入を含む・足りている）[/color][/font_size]"]])
+	rows.append(["空軍・海軍", "空軍力 %d・海軍力 %d%s" % [int(S.airPower(nid)), int(S.navyPower(nid)), ("　" + _cs("全面攻勢中", C_DANGER)) if na.get("offensive", false) else ""]])
 	var gu = []
 	for g in na.get("guar", []):
 		if S.NAT(g).alive: gu.append(_natLink(g) + _roleTag(S.NAT(g)))

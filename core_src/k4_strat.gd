@@ -333,7 +333,7 @@ func cpuDiplomacy(nid: int) -> void:
 		if d.k == "guard": guarding = true
 	var chanceMul: float = DES.warChanceMul if wantWar else (0.4 if guarding else (DES.noWishMul if G.nations.size() > 16 else 0.8))
 	var fasc: bool = na.persona == "fascism"
-	if randf() > DIP.cpuWarChance.get(na.persona, 0.2) * (max(0.7, crowdMul()) if fasc else crowdMul()) * (max(1.0, chanceMul) if fasc else chanceMul): return
+	if randf() > DIP.cpuWarChance.get(na.persona, 0.2) * (max(0.7, crowdMul()) if fasc else crowdMul()) * (max(1.0, chanceMul) if fasc else chanceMul) * (1.0 + tension() / 35.0): return
 	var mine := nationPower(nid)
 	var ambition: float = min(DIP.cpuAmbitionMax, G.turn * DIP.cpuAmbition)
 	var needW: float = DIP.cpuWarNeed.get(na.persona, 34)
@@ -359,6 +359,7 @@ func cpuDiplomacy(nid: int) -> void:
 		if isTrade(nid, o.id): sc -= 15
 		if not cb: sc -= 15
 		elif fasc: sc += 25
+		if resWant(nid, o.id): sc += 12   # 足りない資源を持つ隣国を狙う
 		if dv != null: sc += 10 if dv.k == "guard" else DES.warBonus
 		if sc >= needW: cand.append({"id": o.id, "sc": sc})
 	if cand.is_empty():
@@ -402,7 +403,7 @@ func cpuPeaceTies(nid: int, P: Dictionary) -> void:
 func cpuFabricate(nid: int, P: Dictionary, mine: float) -> void:
 	if not (P.fab > 0) or randf() > P.fab * crowdMul(): return
 	var na := NAT(nid)
-	if na.has("ideo") and na.ws < IDEO[na.ideo].wsNeed - 10: return
+	if na.has("ideo") and na.ws < wsNeedOf(na) - 10: return
 	if na.gold < CASUS.fabGold + 4000: return
 	for o in G.nations:
 		if o.alive and fabLeft(nid, o.id) > 0: return

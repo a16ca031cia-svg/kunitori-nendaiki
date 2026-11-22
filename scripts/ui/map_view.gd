@@ -385,6 +385,7 @@ var _redrawQ = []
 func refreshAll() -> void:
 	if S.G == null: return
 	kick()
+	if S.UI.get("mapMode", "pol") != "pol" and S.UI.get("mapMode", "pol") != "terr": _dirtyOwn = true
 	if S.G != G_:
 		setup()
 		_redrawQ = []
@@ -418,10 +419,30 @@ func beatRefresh() -> void:
 func _mix(hex: String, base: Color, a: float) -> Color:
 	var c = Color(hex)
 	return Color(c.r * a + base.r * (1 - a), c.g * a + base.g * (1 - a), c.b * a + base.b * (1 - a))
+## 地図の表示：国（pol）・思想（ideo）・陣営（fac）・補給（sup）・地形（terr）
+const MAP_MODES := [["pol", "国"], ["ideo", "思想"], ["fac", "陣営"], ["sup", "補給"], ["terr", "地形"]]
 func tileColor(t: Dictionary) -> Color:
 	var base = Color(S.terrOf(t).c)
+	var mode: String = S.UI.get("mapMode", "pol")
+	if mode == "terr": return base
 	if t.owner < 0: return base.lerp(Color(0.47, 0.42, 0.33), 0.22)
+	var na = S.NAT(t.owner)
+	match mode:
+		"ideo":
+			return base.lerp(Color(S.IDEO[na.get("ideo", "neutral")].c), 0.62)
+		"fac":
+			return base.lerp(S.facColor(S.facOf(t.owner)), 0.62)
+		"sup":
+			var ok: bool = na.get("supSet") is Dictionary and na.supSet.has(t.id)
+			var home: bool = t.get("home", -1) == t.owner
+			var c := Color("#6d9c63") if ok else Color("#c0504a")
+			if ok and not home: c = Color("#c9a227")
+			return base.lerp(c, 0.55)
 	return _mix(S.NAT(t.owner).color, base, 0.5 if S.G.nations.size() > 16 else 0.36)
+func setMapMode(m: String) -> void:
+	S.UI.mapMode = m
+	_dirtyOwn = true
+	refreshAll()
 func _updateColors() -> void:
 	for t in S.G.terrs:
 		var c = tileColor(t)

@@ -53,12 +53,22 @@ func armyStats(a: Dictionary) -> Dictionary:
 		atk *= 1 + DIP.revoltAtk; def *= 1 + DIP.revoltDef; chg += DIP.revoltChg
 	atk *= 1 + nmod(a.owner, "atk") + (0.05 if na.get("eqMul", 1.0) >= 0.99 and na.get("eq", 0) > 6000 else 0.0)
 	def *= 1 + nmod(a.owner, "def")
+	chg += nmod(a.owner, "chg")
+	# 組織率・将軍の特性・この戦いの空と海（bmod）
+	var om := orgMul(a)
+	var gtm := genTraitMods(a, T(a.at))
+	var bm: float = a.get("bmod", 0.0)
+	atk *= om * (1.0 + gtm.atk + bm)
+	def *= om * (1.0 + gtm.def + bm)
+	chg += gtm.chg
 	return {"tot": tot, "atk": atk, "def": def, "chg": min(0.5, chg)}
 func fortMul(t: Dictionary) -> float:
 	var m: float = 1 + CFG.fortBase + FORT_DEV_DEF[t.dev] if t.type == "fort" else 1.0
 	if t.get("trait") == "mount": m += 0.15
 	m += terrOf(t).def
 	if t.type == "fort": m += nmod(t.owner, "fort")
+	# 本土（ゲーム開始時からの自国の領地）を守る時は防御 +25%（HOI4 の中核州のように、一気に滅ぶのを防ぐ）
+	if t.owner >= 0 and t.get("home", -1) == t.owner: m += 0.25
 	return max(0.5, m)
 
 ## 経路探索の下ごしらえ：隣の番号・入るのにかかるターン・持ち主を詰めた配列（地図・インフラ・持ち主が変わったら作り直す）
@@ -563,6 +573,7 @@ func checkNations() -> void:
 			logMsg("%s は滅亡しました" % na.name, "war")
 			chron("%s 滅亡" % na.name, na.id, "end")
 			nation_fell.emit(na.id)
+			headline("%s 滅亡" % natLabel(na.id), "")
 			for v in G.nations:
 				if v.alive and v.lord == na.id: freeVassal(v.id, "主君の滅亡")
 	warSuccession()
@@ -635,6 +646,11 @@ func battleTick(A: Array, D: Array, t: Dictionary):
 	applyLoss(A, dToA * am)
 	return {"ca": ca, "cd": cd, "dToD": dToD, "dToA": dToA * am, "sa": sa, "sd": sd}
 func recordBattle(A: Array, D: Array, res: String) -> void:
+	orgAfterBattle(A, D, res)
+	var bt := T(D[0].at) if D.size() and D[0] != null else (T(A[0].at) if A.size() and A[0] != null else null)
+	if bt != null: genAfterBattle(A, D, res, bt)
+	for x in A + D:
+		if x != null: x.erase("bmod")
 	var win := A if res == "A" else D
 	var lose := D if res == "A" else A
 	if win.size(): NAT(win[0].owner).wins += 1
@@ -700,6 +716,13 @@ func runBattle(atts: Array, defs: Array, t: Dictionary):
 	for a in atts:
 		if a != null and total(a.t) > 0: A.append(a)
 	var lead = A[0]
+	# 制空権（空軍力 1.5 倍で攻防 ±10%）と、海峡越しの攻めの制海権（無いと攻撃 -25%）
+	if defs.size() and defs[0] != null:
+		var ae := airEdge(lead.owner, defs[0].owner)
+		var sp := seaEdgePenalty(lead.owner, defs[0].owner, lead.at, t.id)
+		for x in A: x.bmod = ae + sp
+		for x in defs:
+			if x != null: x.bmod = -ae
 	var watch: bool = CFG.showCpuBattle and UI.speed != 3 and (concerns([lead.owner, defs[0].owner]) or UI.get("watchAll", false)) and battle_show.get_connections().size() > 0
 	# 自動進行中は、戦闘画面を見せる時間を1ターンあたりの上限で区切る（ターンが長く止まらないように）
 	if watch and UI.get("auto", false) and BATTLE_SPENT + BEAT_SPENT + 1500 > BEAT_MAX: watch = false
