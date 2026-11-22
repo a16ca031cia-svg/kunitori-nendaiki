@@ -755,6 +755,44 @@ func cpuTurn(nid: int) -> void:
 	var hot := []
 	for t in frontier:
 		if RK[t.id] > 0: hot.append(t)
+	# 国境の守り：平時は隣国ごとの脅威に応じて国境の要所に軍を置く（2割は予備）。戦時も、戦っていない相手との国境を空にしない
+	var peaceDef := -1
+	var calmPost := {}   # 戦時に、戦っていない相手との国境に置く持ち場（前線へ引き抜かない）
+	if smartAI(nid):
+		if foes.is_empty():
+			# 攻めてきそうな隣国（こちらに向けて軍備を進めている国）があれば、予備も出して、その国境へ寄せる
+			var threatened := {}
+			for o in G.nations:
+				if o.alive and o.id != nid and isTense(nid, o.id) and prepBy(nid, o.id) == o.id and nationsAdjacent(nid, o.id): threatened[o.id] = true
+			var bRes: int = 0 if threatened.size() else (int(floor(list.size() * 0.2)) if list.size() >= 3 else 0)
+			var bp := borderPosts(nid, list.size() - bRes)
+			var hs := {}
+			var nh := []
+			# 今の持ち場がまだ脅威のある国境なら、そのまま守らせる（割り振りが少し変わるたびに入れ替わらないように）
+			for a in list:
+				var ps = a.get("post")
+				if ps == null or hs.has(ps) or T(ps).owner != nid: continue
+				var keep := false
+				for nb in roadNbrs(ps):
+					var o: int = T(nb.to).owner
+					if o >= 0 and o != nid and borderThreat(nid, o) > 0 and (threatened.is_empty() or threatened.has(o)):
+						keep = true
+						break
+				if keep:
+					nh.append(T(ps))
+					hs[ps] = true
+			for t in bp:
+				if hs.has(t.id): continue
+				nh.append(t)
+				hs[t.id] = true
+			for t in hot:
+				if not hs.has(t.id): nh.append(t)
+			hot = nh
+			peaceDef = list.size() - bRes
+		else:
+			for t in borderPosts(nid, int(ceil(list.size() * 0.25)), true):
+				calmPost[t.id] = true
+				if not hot.has(t): hot.append(t)
 	if smartAI(nid) and foes.size():
 		var cap := T(na.capital)
 		if cap.owner == nid:
@@ -792,6 +830,7 @@ func cpuTurn(nid: int) -> void:
 	var guardRate := clamp_f(P.guard + clamp_f(danger, 0, 1.6) * DIP.guardDanger, 0.2, 0.9)
 	if foes.size() and obj != null: guardRate = min(guardRate, 0.55)
 	var nDef := int(round(list.size() * guardRate))
+	if peaceDef >= 0: nDef = max(nDef, peaceDef)
 	if foes.size() and obj != null: nDef = min(nDef, max(0, list.size() - max(1, int(ceil(list.size() * 0.4)))))
 	var guard := {}
 	var freeA := list.duplicate()
@@ -861,6 +900,7 @@ func cpuTurn(nid: int) -> void:
 		var spare := []
 		for aid in guard.keys():
 			var gt: int = guard[aid]
+			if calmPost.has(gt): continue
 			if thrSet.has(gt) or T(gt).cap: continue
 			var ga = na.armies[aid]
 			if ga != null and not freeA.has(ga): spare.append(ga)
@@ -1187,3 +1227,110 @@ func cpuBeat(a) -> void:
 	var d: int = min(CFG.cpuDelay, BEAT_MAX - BEAT_SPENT - BATTLE_SPENT)
 	BEAT_SPENT += d
 	await sleep_ms(d)
+
+# ============ 国境の守り：隣国ごとの脅威に応じて、国境の要所に守備の持ち場を割り振る ============
+## 隣国 o からの脅威の見積もり（0 なら守らなくてよい相手）
+var _btC := {}
+var _btK := -1
+func borderThreat(nid: int, o: int) -> float:
+	# ターン（と戦略の見積もり）ごとに覚えておく
+	var kk: int = G.turn * 100000 + STRAT_REV
+	if kk != _btK:
+		_btK = kk
+		_btC = {}
+	var ck: int = nid * 4096 + o
+	if _btC.has(ck): return _btC[ck]
+	var v := _borderThreatCalc(nid, o)
+	_btC[ck] = v
+	return v
+func _borderThreatCalc(nid: int, o: int) -> float:
+	if lordOf(o) == nid or lordOf(nid) == o or isAlly(nid, o) or sameFaction(nid, o): return 0.0
+	var w: float = nationPower(o)
+	if atWar(nid, o): w *= 3.0
+	elif isTense(nid, o): w *= 2.5 if prepBy(nid, o) == o else 1.6
+	if isTopThreat(o): w *= 1.5
+	if hasCB(o, nid): w *= 1.5
+	if favorOf(o, nid) < 0: w *= 1.3
+	if NAT(o).get("ideo") == "fascism" or NAT(o).get("ideo") != NAT(nid).get("ideo"): w *= 1.2
+	if pactLeft(nid, o) > 6: w *= 0.5
+	return w
+## 国境の持ち場の一覧（大事な順）。n＝置ける軍の数。skipWar＝戦争中の相手の境は除く（前線は別に扱う）
+var _bpCache := {}
+func borderPosts(nid: int, n: int, skipWar := false) -> Array:
+	var key := "%d_%d_%d_%s_%d" % [nid, STRAT_REV, n, skipWar, G.turn]
+	if _bpCache.has(key): return _bpCache[key]
+	if _bpCache.size() > 200: _bpCache = {}
+	# 隣国ごとの国境の領地と、そこから相手の領地へ通じる道の数
+	var sect := {}
+	for t in ownList(nid):
+		for nb in roadNbrs(t.id):
+			var o: int = T(nb.to).owner
+			if o < 0 or o == nid: continue
+			if not sect.has(o): sect[o] = {}
+			sect[o][t.id] = sect[o].get(t.id, 0) + 1
+	var ws := {}
+	var wsum := 0.0
+	for o in sect:
+		if skipWar and atWar(nid, o): continue
+		var w := borderThreat(nid, o)
+		if w <= 0: continue
+		ws[o] = w
+		wsum += w
+	var out := []
+	if wsum <= 0 or n <= 0:
+		_bpCache[key] = out
+		return out
+	# 脅威に比べて持ち場を割り振る（脅威のある相手には最低1つ）。国境の長さより多くは置かない
+	var alloc := {}
+	var left := n
+	var os := ws.keys()
+	os.sort_custom(func(a, b): return ws[a] > ws[b])
+	for o in os:
+		if left <= 0: break
+		alloc[o] = 1
+		left -= 1
+	while left > 0:
+		var best = null
+		var bv := -1.0
+		for o in os:
+			var have: int = alloc.get(o, 0)
+			if have >= sect[o].size(): continue
+			var v: float = ws[o] / (have + 1.0)
+			if v > bv:
+				bv = v
+				best = o
+		if best == null: break
+		alloc[best] = alloc.get(best, 0) + 1
+		left -= 1
+	var taken := {}
+	for o in os:
+		var k: int = alloc.get(o, 0)
+		if k <= 0: continue
+		# 要所の順：相手へ通じる道が多い・首都・都市・砦・開発度。選んだ所の隣は後回し（散らして置く）
+		var tl: Array = sect[o].keys()
+		var sc := {}
+		for id in tl:
+			var t := T(id)
+			sc[id] = sect[o][id] * 3.0 + (6.0 if t.cap else 0.0) + (2.0 if t.type == "city" else 0.0) + (2.0 if t.type == "fort" else 0.0) + t.dev * 0.5
+		var picked := 0
+		while picked < k and tl.size():
+			var bid = null
+			var bsc := -INF
+			for id in tl:
+				if taken.has(id): continue
+				var s: float = sc[id]
+				for nb in roadNbrs(id):
+					if taken.has(nb.to): s -= 4.0
+				if s > bsc:
+					bsc = s
+					bid = id
+			if bid == null: break
+			taken[bid] = true
+			tl.erase(bid)
+			out.append([bid, ws[o] / alloc[o]])
+			picked += 1
+	out.sort_custom(func(a, b): return a[1] > b[1])
+	var res := []
+	for e in out: res.append(T(e[0]))
+	_bpCache[key] = res
+	return res

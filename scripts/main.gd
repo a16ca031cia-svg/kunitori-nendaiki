@@ -2070,10 +2070,19 @@ func _armyEval(runs: int, turns: int, seedBase := 7000) -> void:
 		var LW = {}
 		var PST = {}
 		var BORN = {}
-		var R = {"frontN": 0, "frontCov": 0, "moves": 0, "peace": 0, "peaceOld": 0, "leave": 0, "back": 0, "waste": 0, "idleWar": 0, "warTurns": 0, "armyTurns": 0, "loop": 0}
+		var WS = {}   # 戦争 → 始まった時の守り手の領地の数
+		var R = {"frontN": 0, "frontCov": 0, "bN": 0, "bCov": 0, "dLoss": 0.0, "dN": 0, "moves": 0, "peace": 0, "peaceOld": 0, "leave": 0, "back": 0, "waste": 0, "idleWar": 0, "warTurns": 0, "armyTurns": 0, "loop": 0}
 		for k in turns:
 			await S.endTurn()
 			if S.G.over != null: break
+			# 開戦直後の失地：戦争が始まって6ターン後に、守り手（宣戦された国）が失った領地の割合
+			for W in S.G.wars.values():
+				if not WS.has(W.id): WS[W.id] = {"t": k, "b": W.b, "n0": S.ownCount(W.b)}
+			for wid in WS:
+				var e = WS[wid]
+				if k - e.t == 6 and e.n0 > 0:
+					R.dLoss += max(0.0, float(e.n0 - S.ownCount(e.b))) / e.n0
+					R.dN += 1
 			for na in S.G.nations:
 				if not na.alive: continue
 				var war: bool = S.inWar(na.id)
@@ -2081,6 +2090,21 @@ func _armyEval(runs: int, turns: int, seedBase := 7000) -> void:
 				for o in S.G.nations:
 					if o.alive and o.id != na.id and S.isTense(na.id, o.id): tense = true
 				if war: R.warTurns += 1
+				if not war:
+					# 国境の守り：平時に、よその国と接する自国の領地のうち、そこか隣（自国の領地）に自国の軍がいる割合
+					var armAt = {}
+					for x in na.armies:
+						if x != null and S.total(x.t) > 0: armAt[x.at] = true
+					for t in S.ownList(na.id):
+						var bd := false
+						var cov: bool = armAt.has(t.id)
+						for nb in S.roadNbrs(t.id):
+							var o: int = S.T(nb.to).owner
+							if o >= 0 and o != na.id and S.lordOf(o) != na.id and S.lordOf(na.id) != o: bd = true
+							if o == na.id and armAt.has(nb.to): cov = true
+						if not bd: continue
+						R.bN += 1
+						if cov: R.bCov += 1
 				if war:
 					# 前線の手当て：敵軍が隣にいる自国の領地のうち、味方の軍がいる割合
 					for t in S.ownList(na.id):
@@ -2156,6 +2180,7 @@ func _armyEval(runs: int, turns: int, seedBase := 7000) -> void:
 	print("SCORE 無駄=%.2f（軍100ターンあたり・小さいほど良い） 占領/戦争100国ターン=%.1f" % [score, T0.cap / wt * 100.0])
 	print("SCORE3 前線の手当て=%.2f（敵軍が隣にいる前線の領地に味方がいる割合） 取られた領地=%d" % [T0.frontCov / max(1.0, float(T0.frontN)), T0.cap])
 	print("SCORE2 戦時の無駄=%.2f（戦争1国ターンあたり） 平時の無駄=%.3f（軍100ターンあたり）" % [(T0.back * 3.0 + T0.loop * 2.0 + T0.waste * 2.0 + T0.idleWar) / wt, T0.leave * 2.0 / at * 100.0])
+	print("SCORE4 国境の守り=%.2f（平時に国境の領地のそこか隣に自国の軍がいる割合） 開戦直後の失地=%.3f（宣戦された国が6ターンで失った領地の割合・%d戦争）" % [T0.bCov / max(1.0, float(T0.bN)), T0.dLoss / max(1.0, float(T0.dN)), T0.dN])
 ## 守備の持ち場（国境の要所・首都）にいるか
 func _atPost(a, nid: int) -> bool:
 	var t = S.T(a.at)

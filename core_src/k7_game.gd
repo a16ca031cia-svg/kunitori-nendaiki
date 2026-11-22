@@ -13,6 +13,7 @@ func newGame(size: String) -> void:
 	G.factions = {}
 	G.ncol = NCOL.duplicate()
 	hoiInit(G)
+	if size == "japan": initialForces()
 	beginGame()
 func _resetCaches() -> void:
 	NBR = null; NBR_G = null; SEGN_DONE = null; COAST_G = null; HOP_G = null; ADJ_G = null
@@ -195,3 +196,26 @@ func slotJpMap(i: int) -> int:
 	f.close()
 	if not (g is Dictionary) or g.get("size") != "japan": return -1
 	return int(g.get("jpMap", 0))
+## 日本地図：開始時からある程度の軍を持ち、国境の要所に置いておく（大国は1つ多い。ドイツなどは兵の蓄えの上乗せの分だけ大きい）
+func initialForces() -> void:
+	for na in G.nations:
+		if not na.alive: continue
+		var cd = COUNTRY.get(na.name)
+		var mul := 1.0
+		if cd != null: mul = float(cd.get("boost", {}).get("stock", 1.0))
+		var k: int = clampi(ownCount(na.id) / 9, 2, 5) + (1 if cd != null and cd.has("tree") else 0)
+		var sz := int(4000 * mul)
+		var a0 = na.armies[0]
+		if a0 != null:
+			a0.t.inf = sz
+			a0.target.inf = sz
+		var posts := borderPosts(na.id, k - 1)
+		for i in min(k - 1, posts.size()):
+			var slot: int = na.armies.find(null)
+			if slot < 0: break
+			var a := mkArmy(na.id, slot, posts[i].id)
+			a.t.inf = sz
+			a.target.inf = sz
+			a.post = posts[i].id
+			na.armies[slot] = a
+			ARMY_REV += 1

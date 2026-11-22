@@ -4,6 +4,8 @@
 cd "$(dirname "$0")/.."
 sh tools/build_core.sh >/dev/null
 GD=/c/Godot_v4.7.2-stable_win64/Godot_v4.7.2-stable_win64_console.exe
+# 構文の誤りがあると全部が止まったままになるので、先に確かめる
+if $GD --headless --path . --check-only --script scripts/core.gd 2>&1 | grep -q "Parse Error"; then $GD --headless --path . --check-only --script scripts/core.gd 2>&1 | grep "Parse Error"; exit 1; fi
 TMP=$(mktemp -d)
 for s in 7000 9000 11000 13000 15000 17000 19000 21000; do
   $GD --headless --path . -- --armyeval 3 50 $s > $TMP/$s.txt 2>&1 &
@@ -14,5 +16,7 @@ W=$(cat $TMP/*.txt | grep -o "戦時の無駄=[0-9.]*" | cut -d= -f2 | awk '{s+=
 P=$(cat $TMP/*.txt | grep -o "平時の無駄=[0-9.]*" | cut -d= -f2 | awk '{s+=$1;n++} END {if (n) printf "%.3f", s/n}')
 C=$(cat $TMP/*.txt | grep -o "占領/戦争100国ターン=[0-9.]*" | cut -d= -f2 | awk '{s+=$1;n++} END {if (n) printf "%.1f", s/n}')
 F=$(cat $TMP/*.txt | grep -o "前線の手当て=[0-9.]*" | cut -d= -f2 | awk '{s+=$1;n++} END {if (n) printf "%.2f", s/n}')
-echo "平均 戦時=$W 平時=$P 占領=$C 前線の手当て=$F"
+B=$(cat $TMP/*.txt | grep -o "国境の守り=[0-9.]*" | cut -d= -f2 | awk '{s+=$1;n++} END {if (n) printf "%.2f", s/n}')
+L=$(cat $TMP/*.txt | grep -o "開戦直後の失地=[0-9.]*" | cut -d= -f2 | awk '{s+=$1;n++} END {if (n) printf "%.3f", s/n}')
+echo "平均 戦時=$W 平時=$P 占領=$C 前線の手当て=$F 国境の守り=$B 開戦直後の失地=$L"
 rm -rf $TMP
