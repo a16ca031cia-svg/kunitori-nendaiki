@@ -327,8 +327,10 @@ func cpuDiplomacy(nid: int) -> void:
 	var des := desiresOf(nid)
 	var wantWar := false
 	var guarding := false
+	var fasc0: bool = na.persona == "fascism"
 	for d in des:
-		if d.k == "prosper": return
+		# 富国の望みがあると戦わない（ファシズムの国と、世界の緊張が高い時は別）
+		if d.k == "prosper" and not fasc0 and tension() < 60: return
 		if DESIRE[d.k].war or d.k == "protect": wantWar = true
 		if d.k == "guard": guarding = true
 	var chanceMul: float = DES.warChanceMul if wantWar else (0.4 if guarding else (DES.noWishMul if G.nations.size() > 16 else 0.8))
@@ -343,10 +345,11 @@ func cpuDiplomacy(nid: int) -> void:
 		if o.id == nid or not o.alive or not canPrepare(nid, o.id): continue
 		if not nationsAdjacent(nid, o.id): continue
 		var dv = desireVs(nid, o.id)
-		if guarding and dv == null: continue
 		var sm := smartAI(nid)
 		var th: float = defCoalition(nid, o.id) if sm else max(1.0, nationPower(o.id))
 		var mineC: float = atkCoalition(nid, o.id) if sm else mine
+		# 守りを固めたい時は、望みのある相手だけを狙う（ファシズムの国は、相手より1.3倍以上強ければ構わず狙う）
+		if guarding and dv == null and not (fasc0 and mineC >= th * 1.3): continue
 		var cb := hasCB(nid, o.id)
 		if not cb and na.get("ideo") == "democracy": continue
 		if not cb and not (mineC >= th * 1.8 and randf() < P.noCB): continue

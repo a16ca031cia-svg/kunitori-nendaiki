@@ -1816,6 +1816,9 @@ func _balance(runs: int, turns: int) -> void:
 				var ln = "  兵力 T%d " % S.G.turn
 				for n in S.G.nations:
 					if n.alive and (n.id == tn or S.nationsAdjacent(tn, n.id)): ln += "%s%s:兵%d万・国力%d万%s　" % [n.name.substr(0, 2), ("(" + n.get("role", "") + ")") if n.id == tn else "", S.nationTroops(n.id) / 10000, S.nationPower(n.id) / 10000, "【戦争中】" if S.atWar(tn, n.id) else ""]
+				if tn >= 0:
+					var tna = S.NAT(tn)
+					ln += "\n    状態 思想=%s 戦争支持=%d/%d 政治力=%d 方針=%s 安定=%d 終えた方針=%d 資源=%.2f(鉄%d/%d 油%d/%d 輸入%d/%d) 世代=%.1f 法=%s" % [tna.get("ideo", "?"), int(tna.get("ws", 0)), int(S.wsNeedOf(tna)), int(tna.get("pp", 0)), str(tna.focus.cur), int(tna.get("stab", 0)), tna.focus.done.size(), S.resMul(tn), S.resources(tn).have.steel, S.resources(tn).need.steel, S.resources(tn).have.oil, S.resources(tn).need.oil, S.resources(tn).imp.steel, S.resources(tn).imp.oil, S.equipGen(tna), str(tna.get("laws", {}))]
 				print(ln)
 			var pr = 0
 			var inw = 0

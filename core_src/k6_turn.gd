@@ -205,7 +205,8 @@ func production() -> void:
 		na.foodNeed = need
 		na.food = int(clamp_f(round(na.food + food - need), -3000, foodCap(na.id)))
 		for t in own: updateTerr(t, na, war)
-		na.fatigue = clamp_f(na.get("fatigue", 0) + (CFG.fatWar if war else CFG.fatPeace), 0, 100)
+		# 戦争支持が高いほど厭戦は溜まりにくい（支持 90 で半分）
+		na.fatigue = clamp_f(na.get("fatigue", 0) + (CFG.fatWar * clamp_f(1.4 - na.get("ws", 50.0) / 100.0, 0.5, 1.2) if war else CFG.fatPeace), 0, 100)
 	for t in G.terrs:
 		if t.chaos > 0: t.chaos -= 1
 		if t.get("devP", false):

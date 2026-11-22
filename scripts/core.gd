@@ -1,4 +1,4 @@
-# 自動生成：core_src/*.gd をまとめたもの（直接編集しない。tools/build_core.sh で作り直す）
+# 自動生成：core_src/*.gd をまとめたもの（直接編集しない。tools/build_core.sh か publish.ps1 で作り直す）
 extends Node
 
 # ==================== k0_base.gd ====================
@@ -3459,8 +3459,10 @@ func cpuDiplomacy(nid: int) -> void:
 	var des = desiresOf(nid)
 	var wantWar = false
 	var guarding = false
+	var fasc0: bool = na.persona == "fascism"
 	for d in des:
-		if d.k == "prosper": return
+		# 富国の望みがあると戦わない（ファシズムの国と、世界の緊張が高い時は別）
+		if d.k == "prosper" and not fasc0 and tension() < 60: return
 		if DESIRE[d.k].war or d.k == "protect": wantWar = true
 		if d.k == "guard": guarding = true
 	var chanceMul: float = DES.warChanceMul if wantWar else (0.4 if guarding else (DES.noWishMul if G.nations.size() > 16 else 0.8))
@@ -3475,10 +3477,11 @@ func cpuDiplomacy(nid: int) -> void:
 		if o.id == nid or not o.alive or not canPrepare(nid, o.id): continue
 		if not nationsAdjacent(nid, o.id): continue
 		var dv = desireVs(nid, o.id)
-		if guarding and dv == null: continue
 		var sm = smartAI(nid)
 		var th: float = defCoalition(nid, o.id) if sm else max(1.0, nationPower(o.id))
 		var mineC: float = atkCoalition(nid, o.id) if sm else mine
+		# 守りを固めたい時は、望みのある相手だけを狙う（ファシズムの国は、相手より1.3倍以上強ければ構わず狙う）
+		if guarding and dv == null and not (fasc0 and mineC >= th * 1.3): continue
 		var cb = hasCB(nid, o.id)
 		if not cb and na.get("ideo") == "democracy": continue
 		if not cb and not (mineC >= th * 1.8 and randf() < P.noCB): continue
@@ -4235,7 +4238,8 @@ func production() -> void:
 		na.foodNeed = need
 		na.food = int(clamp_f(round(na.food + food - need), -3000, foodCap(na.id)))
 		for t in own: updateTerr(t, na, war)
-		na.fatigue = clamp_f(na.get("fatigue", 0) + (CFG.fatWar if war else CFG.fatPeace), 0, 100)
+		# 戦争支持が高いほど厭戦は溜まりにくい（支持 90 で半分）
+		na.fatigue = clamp_f(na.get("fatigue", 0) + (CFG.fatWar * clamp_f(1.4 - na.get("ws", 50.0) / 100.0, 0.5, 1.2) if war else CFG.fatPeace), 0, 100)
 	for t in G.terrs:
 		if t.chaos > 0: t.chaos -= 1
 		if t.get("devP", false):
@@ -6397,6 +6401,8 @@ func resources(nid: int) -> Dictionary:
 	var mul: float = 1.0 + nmod(nid, "res")
 	for k in have: have[k] *= mul
 	var mf: int = factoryCount(nid)[0]
+	# 人造石油：軍需工場の一部が石炭から石油を作る（ドイツは多い）
+	have.oil += mf * (0.15 + nmod(nid, "synth"))
 	var need = {"steel": mf * 1.0, "oil": mf * 0.5 + techLv(na, "armor") * 1.0}
 	# 通商相手の余りを輸入する
 	var imp = {"steel": 0.0, "oil": 0.0}
@@ -6908,7 +6914,7 @@ const COUNTRY := {
 	"北海道": {"r": "ソ連", "ideo": "communism", "pop": {"fascism": 3, "democracy": 5, "neutral": 7}, "tree": TREE_SOV,
 		"sp": [["広大な凍土", "人口上限 -20%・食料 -25%・兵の生産 -10%・ゴールド -15%", {"pop": -0.2, "food": -0.25, "troop": -0.1, "gold": -0.15}], ["大粛清の影", "攻撃 -10%・安定度 -10", {"atk": -0.10, "stab": -10.0}]]},
 	"群馬県": {"r": "ドイツ", "ideo": "democracy", "pop": {"fascism": 42, "communism": 12, "neutral": 8}, "stab": -12, "boost": {"dev": 1, "stock": 3.0}, "tree": TREE_GER,
-		"sp": [["列強", "ゴールド +15%・兵の生産 +15%・軍需工場の出力 +10%・兵の上限 +25%", {"gold": 0.15, "troop": 0.15, "mf": 0.10, "cap": 0.25}], ["プロイセンの伝統", "攻撃 +25%・防御 +15%", {"atk": 0.25, "def": 0.15}], ["工業大国", "軍需工場の出力 +20%・民需工場の出力 +10%・ゴールド +10%", {"mf": 0.20, "cf": 0.10, "gold": 0.10}], ["ヴェルサイユの軛", "兵の生産 -15%・軍需工場の出力 -10%", {"troop": -0.15, "mf": -0.10}], ["恐慌の傷跡", "安定度 -5・ゴールド -5%", {"stab": -5.0, "gold": -0.05}]]},
+		"sp": [["列強", "ゴールド +15%・兵の生産 +15%・軍需工場の出力 +10%・兵の上限 +25%", {"gold": 0.15, "troop": 0.15, "mf": 0.10, "cap": 0.25}], ["プロイセンの伝統", "攻撃 +25%・防御 +15%", {"atk": 0.25, "def": 0.15}], ["工業大国", "軍需工場の出力 +20%・民需工場の出力 +10%・ゴールド +10%・人造石油", {"mf": 0.20, "cf": 0.10, "gold": 0.10, "synth": 0.40}], ["ヴェルサイユの軛", "兵の生産 -15%・軍需工場の出力 -10%", {"troop": -0.15, "mf": -0.10}], ["恐慌の傷跡", "安定度 -5・ゴールド -5%", {"stab": -5.0, "gold": -0.05}]]},
 	"東京都": {"r": "イギリス", "ideo": "democracy", "pop": {"fascism": 4, "communism": 6, "neutral": 10}, "tree": TREE_UK,
 		"sp": [["列強", "ゴールド +15%・兵の生産 +15%・軍需工場の出力 +10%・兵の上限 +25%", {"gold": 0.15, "troop": 0.15, "mf": 0.10, "cap": 0.25}], ["大英帝国", "ゴールド +10%", {"gold": 0.10}], ["宥和の空気", "戦争支持 -10", {"ws": -10.0}]]},
 	"長野県": {"r": "フランス", "ideo": "democracy", "pop": {"fascism": 8, "communism": 18, "neutral": 8}, "tree": TREE_FRA,

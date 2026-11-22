@@ -101,6 +101,8 @@ func resources(nid: int) -> Dictionary:
 	var mul: float = 1.0 + nmod(nid, "res")
 	for k in have: have[k] *= mul
 	var mf: int = factoryCount(nid)[0]
+	# 人造石油：軍需工場の一部が石炭から石油を作る（ドイツは多い）
+	have.oil += mf * (0.15 + nmod(nid, "synth"))
 	var need := {"steel": mf * 1.0, "oil": mf * 0.5 + techLv(na, "armor") * 1.0}
 	# 通商相手の余りを輸入する
 	var imp := {"steel": 0.0, "oil": 0.0}
