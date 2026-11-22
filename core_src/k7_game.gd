@@ -16,7 +16,7 @@ func newGame(size: String) -> void:
 	beginGame()
 func _resetCaches() -> void:
 	NBR = null; NBR_G = null; SEGN_DONE = null; COAST_G = null; HOP_G = null; ADJ_G = null
-	PW_KEY = ""; THR_KEY = ""; DG_KEY = ""; SUP_TERR_KEY = ""; SUP_DIRTY = true
+	PW_KEY = -1; THR_KEY = -1; DG_KEY = -1; SUP_TERR_KEY = ""; SUP_DIRTY = true
 	FOCUS_CACHE = {}; SPROG_MEMO = {}; DIPQ = []
 	_treeCache = {}
 func beginGame() -> void:

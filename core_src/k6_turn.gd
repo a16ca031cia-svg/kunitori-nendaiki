@@ -49,6 +49,7 @@ func endTurn() -> void:
 	UI.busy = true
 	var _t0 = Time.get_ticks_msec()
 	PROF = {}
+	stratBump()
 	for n in G.nations.size():
 		if G.over != null: break
 		if not NAT(n).alive: continue
@@ -74,6 +75,7 @@ func endTurn() -> void:
 	UI.actArmy = null
 	await flushDip()
 	var _t1 = Time.get_ticks_msec()
+	stratBump()
 	await yieldMaybe()
 	await production()
 	await yieldMaybe()
@@ -84,6 +86,7 @@ func endTurn() -> void:
 			if a != null: a.moved = false
 	siegeTurn()
 	armyUpkeepTurn()
+	stratBump()
 	occupationTurn()
 	randomEvent()
 	var nn: int = G.nations.size()
@@ -98,8 +101,12 @@ func endTurn() -> void:
 	checkMilestones()
 	recordHistory()
 	await yieldMaybe()
-	refreshSupply(true)
+	# 持ち主・道・首都が変わっていなければ、補給の範囲は作り直さず軍の補給だけ見直す
+	SUP_DIRTY = true
+	refreshSupply()
 	G.turn += 1
+	yearReviewTurn()
+	historyEventsTurn()
 	G.log.append({"s": "第 %d ターン" % G.turn, "cls": "sep", "t": G.turn})
 	if G.turn > TURN_MAX:
 		logMsg("ターン上限に到達しました", "war")
@@ -523,6 +530,8 @@ func _setBld(t: Dictionary, slot: int, k: String) -> void:
 	while t.bld.size() <= slot: t.bld.append(null)
 	t.bld[slot] = k
 
+## 戦争中の軍の経路は、この先のターン数までだけ調べる（軽さのため。遠い目標は選ばない）
+var BFS_WAR_MAX: int = int(OS.get_environment("KN_BFSMAX")) if OS.get_environment("KN_BFSMAX") != "" else 24
 func cpuTurn(nid: int) -> void:
 	refreshSupply()
 	var na := NAT(nid)
@@ -768,7 +777,7 @@ func cpuTurn(nid: int) -> void:
 	# 経路（行ける範囲）は要る軍の分だけ計算する。戦争中は目標選びに全軍分が要る
 	var getB = func(a):
 		if not bfsOf.has(a.idx):
-			if not bfsAt.has(a.at): bfsAt[a.at] = bfsFrom(a.at, total(a.t), nid)
+			if not bfsAt.has(a.at): bfsAt[a.at] = bfsFrom(a.at, total(a.t), nid, BFS_WAR_MAX if foes.size() else 1 << 30)
 			bfsOf[a.idx] = bfsAt[a.at]
 		return bfsOf[a.idx]
 	if foes.size():

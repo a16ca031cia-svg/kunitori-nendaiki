@@ -10,7 +10,7 @@ const FOCUS_UNIQUE_X := 13   # 固有の枝を置く列
 
 # ---------- 初期化 ----------
 func hoiInit(g: Dictionary) -> void:
-	PW_KEY = ""
+	PW_KEY = -1
 	var gen := []
 	for sp in GENERIC_SPIRITS: gen.append(sp)
 	gen.shuffle()
@@ -77,13 +77,13 @@ func hoiInit(g: Dictionary) -> void:
 	# 最初の工場：首都に軍需・民需を1つずつ（工業県はもっと）
 	var G0 = G
 	G = g
-	PW_KEY = ""
+	PW_KEY = -1
 	for na in g.nations:
 		var ind = START_IND.get(na.name, [1, 1])
 		_buildFactories(na.id, "mf", ind[0], true)
 		_buildFactories(na.id, "cf", ind[1], true)
 	G = G0
-	PW_KEY = ""
+	PW_KEY = -1
 func _normPop(na: Dictionary) -> void:
 	var s := 0.0
 	for k in IDEO_KEYS: s += max(0.0, na.ipop.get(k, 0.0))
@@ -377,6 +377,8 @@ func _applyFocus(na: Dictionary, f: Dictionary) -> void:
 	var e: Dictionary = f.e
 	var nid: int = na.id
 	if e.has("rm"): _rmSpirit(na, e.rm)
+	# 方針で内戦が決着した（スペイン内戦など）
+	if e.get("rm", "") == "内戦" and na.has("civil"): endCivilWarBy(na, f.n)
 	if e.has("sp"): _addSpirit(na, e.sp[0], e.sp[1], e.sp[2], "方針")
 	if e.has("stab"): na.stab = clamp_f(na.stab + e.stab, 0, 100)
 	if e.has("ws"): na.ws = clamp_f(na.ws + e.ws, 0, 100)

@@ -4,9 +4,10 @@
 ## 安定度がとても低い時に政変が起きると、すぐには政権が変わらず内戦になる。
 ## 内戦の間は兵の生産・ゴールドが落ち、一部の領地が混乱する。終わる時、支持の多い側が政権を取る
 const CIVIL_TURNS := 12
-func startCivilWar(na: Dictionary, rebel: String) -> void:
+func startCivilWar(na: Dictionary, rebel: String, endTurn := -1) -> void:
 	if na.has("civil"): return
-	na.civil = {"side": rebel, "end": G.turn + CIVIL_TURNS}
+	na.civil = {"side": rebel, "end": endTurn if endTurn > 0 else G.turn + CIVIL_TURNS}
+	_rmSpirit(na, "内戦")
 	_addSpirit(na, "内戦", "兵の生産 -30%・ゴールド -30%・安定度 -10", {"troop": -0.30, "gold": -0.30, "stab": -10.0}, "内戦")
 	var own := ownList(na.id)
 	var cap := T(na.capital)
@@ -20,6 +21,20 @@ func startCivilWar(na: Dictionary, rebel: String) -> void:
 	logMsg(msg, "war")
 	chron(msg, na.id, "war")
 	addTension(4)
+## 方針で内戦が決着した時（政権の交代は方針の効果のほうで行う）
+func endCivilWarBy(na: Dictionary, why: String) -> void:
+	na.erase("civil")
+	headline("%s の内戦、終わる" % natLabel(na.id), why)
+	chron("%s の内戦が終わる（%s）" % [na.name, why], na.id, "war")
+## 歴史イベント：1936年7月、スペイン（京都）で内戦が始まる（終わりは方針「内戦の行方」の結果で決まる）
+func historyEventsTurn() -> void:
+	if G.get("size") != "japan" or G.turn != 7: return
+	var sp := natByName("京都府")
+	if sp < 0 or not NAT(sp).alive or NAT(sp).has("civil"): return
+	var has := false
+	for s in NAT(sp).spirits:
+		if s.n == "内戦": has = true
+	if has: startCivilWar(NAT(sp), "fascism", G.turn + 999)
 func civilWarTurn(na: Dictionary) -> void:
 	var cw = na.get("civil")
 	if cw == null: return
@@ -45,15 +60,33 @@ func civilWarTurn(na: Dictionary) -> void:
 ## 軍需品に余裕のある国が、戦争中の同じ陣営・同じ思想の国へ軍需品を送る
 func supportTurn(na: Dictionary) -> void:
 	var nid: int = na.id
+	# 義勇軍も軍需品も送れない国は調べない（軽さのため）
+	var canVol: bool = na.get("ws", 0) >= 30 and total(na.stock) > 4000
+	var canLL: bool = na.get("eq", 0) > 9000
+	if not canVol and not canLL: return
 	if not na.has("supCool"): na.supCool = {}
 	var war := inWar(nid)
+	if war and not canLL: return
 	for o in G.nations:
-		if not o.alive or o.id == nid or not inWar(o.id) or atWar(nid, o.id): continue
+		if not o.alive or o.id == nid or atWar(nid, o.id): continue
 		if na.supCool.get(o.id, -99) > G.turn: continue
-		var sameIdeo: bool = o.get("ideo") == na.get("ideo")
+		var cw = o.get("civil")
+		# 内戦中の国：反乱側と同じ思想の国は反乱側へ、政府と同じ思想の国は政府へ義勇軍を送る
+		var rebelSide: bool = cw != null and cw.side == na.get("ideo")
+		var sameIdeo: bool = o.get("ideo") == na.get("ideo") or rebelSide
 		var sameFac := sameFaction(nid, o.id)
 		if not sameIdeo and not sameFac: continue
-		if not natNear(nid, o.id): continue
+		if not natNear(nid, o.id) or (cw == null and not inWar(o.id)): continue
+		if rebelSide:
+			if canVol and not war and randf() < 0.12:
+				o.ipop[cw.side] = o.ipop.get(cw.side, 0.0) + 3.0
+				_normPop(o)
+				na.supCool[o.id] = G.turn + 12
+				var m0 := "%s が %s の %s 派へ義勇軍を送る" % [na.name, o.name, IDEO[cw.side].n]
+				if concerns([nid, o.id]): logMsg(m0)
+				chron(m0, nid, "dip")
+				if newsworthy([nid]): headline("%s、%s の内戦に義勇軍" % [natLabel(nid), natLabel(o.id)], "%s 派を支援する" % IDEO[cw.side].n)
+			continue
 		# 義勇軍：自分は戦争しておらず、戦争支持が 30 以上
 		if not war and sameIdeo and na.ws >= 30 and total(na.stock) > 4000 and randf() < 0.10:
 			var sent := 0
@@ -112,7 +145,41 @@ func factionApplyTurn(na: Dictionary) -> void:
 signal news(head: String, sub: String)
 func headline(head: String, sub := "") -> void:
 	if G == null: return
+	# 見逃しても後で読めるように、見出しを綴っておく（新しい60件）
+	if not G.has("news"): G.news = []
+	G.news.append({"t": G.turn, "h": head, "s": sub})
+	if G.news.size() > 60: G.news = G.news.slice(-60)
 	news.emit(head, sub)
+
+# ---------- 年の振り返り ----------
+## 毎年1月に、前の年に最も版図を広げた国・失った国と、宣戦の数を見出しにする
+func yearReviewTurn() -> void:
+	if (G.turn - 1) % 12 != 0: return
+	var now := {}
+	for na in G.nations:
+		if na.alive: now[na.id] = ownCount(na.id)
+	var base: Dictionary = G.get("yearBase", {})
+	var decl: int = G.get("declN", 0) - G.get("yearDecl", 0)
+	if base.size():
+		var up := -1
+		var upN := 0
+		var dn := -1
+		var dnN := 0
+		for k in base:
+			var d: int = now.get(int(k), 0) - int(base[k])
+			if d > upN:
+				upN = d
+				up = int(k)
+			if d < dnN:
+				dnN = d
+				dn = int(k)
+		var parts := []
+		if up >= 0: parts.append("躍進：%s（+%d）" % [natLabel(up), upN])
+		if dn >= 0: parts.append("後退：%s（%d）" % [natLabel(dn), dnN] if NAT(dn).alive else "滅亡：%s" % natLabel(dn))
+		parts.append("宣戦 %d 回" % decl)
+		headline("%d年を振り返る" % (int(curYear()) - 1), "・".join(parts))
+	G.yearBase = now
+	G.yearDecl = G.get("declN", 0)
 ## 大国（固有の大きな方針ツリーを持つ国）か、選んだ国が関わるか
 func newsworthy(ids: Array) -> bool:
 	for i in ids:

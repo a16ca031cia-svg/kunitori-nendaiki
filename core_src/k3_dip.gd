@@ -264,19 +264,20 @@ func relLabelCol(a: int, b: int) -> String:
 	return REL_COL.get(relState(a, b), "#9b9484")
 
 # ---------- 脅威度 ----------
-var THR_KEY := ""
+var THR_KEY := -1
+var THR_G = null
 var THR_C := {"t": {}}
 func thrCache() -> Dictionary:
-	var k := str(G.turn) + "_" + str(G.get("ownRev", 0))
-	if THR_KEY != k:
-		THR_KEY = k
+	if THR_KEY != STRAT_REV or THR_G != G:
+		THR_KEY = STRAT_REV
+		THR_G = G
 		THR_C = {"t": {}}
 	return THR_C
 func addThreat(nid: int, v: float) -> void:
 	if nid < 0: return
 	var n := NAT(nid)
 	n.threat = clamp_f(n.get("threat", 0) + v, 0, 400)
-	THR_KEY = ""
+	THR_KEY = -1
 func threatOf(nid: int) -> float:
 	var c := thrCache()
 	if c.t.has(nid): return c.t[nid]
@@ -322,7 +323,7 @@ func threatLabel(v: float) -> String:
 func threatColor(v: float) -> String:
 	return "#9b9484" if v < 20 else ("#4d5666" if v < 40 else ("#c9a227" if v < 70 else "#c0504a"))
 func decayThreat() -> void:
-	THR_KEY = ""
+	THR_KEY = -1
 	for n in G.nations: n.threat = max(0.0, n.get("threat", 0) * DIP.threatDecay)
 	var t = topThreat()
 	var cur = t.id if t != null else null

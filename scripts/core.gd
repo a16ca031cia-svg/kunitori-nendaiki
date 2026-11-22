@@ -887,7 +887,7 @@ func _pfPrep() -> void:
 		PF_OWN_KEY = ok
 ## 経路探索：かかるターン数が最短の道（重みが小さな整数なので、ターン数ごとの箱で順に広げる）
 ## 返り値 d[領地]＝かかるターン（届かなければ -1）、prev＝ひとつ前、n＝届く領地の数
-func bfsFrom(start: int, _size = null, nid = null) -> Dictionary:
+func bfsFrom(start: int, _size = null, nid = null, maxD := 1 << 30) -> Dictionary:
 	_pfPrep()
 	var n: int = G.terrs.size()
 	var dist = PackedInt32Array()
@@ -928,6 +928,7 @@ func bfsFrom(start: int, _size = null, nid = null) -> Dictionary:
 				if f & 1 and c < 2: c = 2
 				if f & 2 and PF_INF3[to] == 0: c += 1
 				var nd: int = d + c
+				if nd > maxD: continue
 				var od: int = dist[to]
 				if od >= 0 and od <= nd: continue
 				if od < 0: reach += 1
@@ -970,7 +971,7 @@ func refreshSupply(force := false) -> void:
 	SUP_DIRTY = false
 	var caps = []
 	for n in G.nations: caps.append(n.capital if n.alive else -1)
-	var key = str(G.get("ownRev", 0)) + "_" + str(G.get("roadRev", 0)) + "_" + str(caps)
+	var key = "%d_%d_%s" % [G.get("ownRev", 0), G.get("roadRev", 0), caps]
 	var allSets = true
 	for na in G.nations:
 		if not (na.get("supSet") is Dictionary): allSets = false
@@ -1000,8 +1001,20 @@ func refreshSupply(force := false) -> void:
 
 # ---------- 国力の目安 ----------
 var PW_CACHE = {}
-var PW_KEY = ""
-func powKey() -> String: return str(G.turn) + "_" + str(G.get("ownRev", 0))
+var PW_KEY = -1
+var PW_G = null
+## 鍵は整数（文字列を毎回作ると重い）
+func powKey() -> int: return G.turn * 1000000 + int(G.get("ownRev", 0))
+## 戦略の見積もり（隣り合い・距離・脅威・危険度）の鍵：ターンの区切りごとに1回だけ作り直す（占領のたびには作り直さない。国が滅んだ時は作り直す）
+var STRAT_REV = 0
+var _sbOwn = -1
+var _sbTurn = -1
+func stratBump() -> void:
+	var o: int = int(G.get("ownRev", 0))
+	if o == _sbOwn and G.turn == _sbTurn: return
+	_sbOwn = o
+	_sbTurn = G.turn
+	STRAT_REV += 1
 ## 国力：鍵（ターン・持ち主の変化）が変わったら、全領地を1回だけなめて全部の国をまとめて計算する
 var OWN_N = {}
 var OWN_L = {}
@@ -1011,6 +1024,7 @@ func _powAll() -> void:
 	PW_CACHE = {}
 	OWN_N = {}
 	PW_KEY = powKey()
+	PW_G = G
 	var acc = {}
 	for t in G.terrs:
 		var o: int = t.owner
@@ -1025,7 +1039,7 @@ func _powAll() -> void:
 	for na in G.nations:
 		PW_CACHE[na.id] = round(acc.get(na.id, 0.0) + nationTroops(na.id) * 0.6 + na.gold * 0.05)
 func nationPower(nid: int) -> float:
-	if PW_KEY != powKey(): _powAll()
+	if PW_KEY != powKey() or PW_G != G: _powAll()
 	if PW_CACHE.has(nid): return PW_CACHE[nid]
 	var v = nationPowerCalc(nid)
 	PW_CACHE[nid] = v
@@ -1037,11 +1051,11 @@ func ownList(nid: int) -> Array:
 		for t in G.terrs:
 			if t.owner == nid: r.append(t)
 		return r
-	if PW_KEY != powKey(): _powAll()
+	if PW_KEY != powKey() or PW_G != G: _powAll()
 	return OWN_L.get(nid, [])
 ## 領地の数（国力と同じ鍵で覚えておく）
 func ownCount(nid: int) -> int:
-	if PW_KEY != powKey(): _powAll()
+	if PW_KEY != powKey() or PW_G != G: _powAll()
 	return OWN_N.get(nid, 0)
 func nationPowerCalc(nid: int) -> float:
 	var p = 0.0
@@ -1273,8 +1287,7 @@ func capture(tid: int, nid: int, _byArmy = null) -> void:
 	var t = T(tid)
 	var old: int = t.owner
 	if old == nid: return
-	t.owner = nid
-	G.ownRev = G.get("ownRev", 0) + 1
+	_ownMove(t, old, nid)
 	var nm: String = NAT(nid).name
 	var on: String = NAT(old).name if old >= 0 else "無主の地"
 	logWar("%s が %s を占領しました（旧領主 %s）" % [nm, t.name, on], [nid, old], "good" if nid == followNat() else "war")
@@ -1290,6 +1303,9 @@ func capture(tid: int, nid: int, _byArmy = null) -> void:
 		t.former = old
 		t.formerAt = G.turn
 		if t.cap: t.wasCap = old
+		# 首都の陥落は大きな見出しに
+		if t.cap and t.id == NAT(old).get("capital", -1) and newsworthy([old, nid]):
+			headline("%s の首都 %s 陥落" % [natLabel(old), t.name], "%s 軍が入城する" % natLabel(nid))
 	if old >= 0 and atWar(nid, old) and warOf(nid, old):
 		var wid = warOf(nid, old)
 		if t.get("wTag") != wid:
@@ -1341,6 +1357,7 @@ func checkNations() -> void:
 		if not na.alive: continue
 		if cnt.get(na.id, 0) == 0:
 			na.alive = false
+			STRAT_REV += 1
 			for i in na.armies.size(): na.armies[i] = null; ARMY_REV += 1
 			na.lord = null
 			na.diedAt = G.turn
@@ -1540,6 +1557,34 @@ func flashTerr(tid: int) -> void:
 	fx.emit("flash", tid)
 func invalidateTerr(tid: int) -> void: map_changed.emit("terr", tid)
 func invalidateMap() -> void: map_changed.emit("all", null)
+
+## 占領で持ち主が1つ変わる時：全領地をなめ直さず、2国の一覧・数・国力だけを直す（軽さのため）
+## 一覧は作り直して入れ替える（ほかの所で一覧を回している最中でも壊れないように）
+func _terrPow(t: Dictionary) -> float:
+	var nb = 0
+	for b in t.bld:
+		if b: nb += 1
+	return t.dev * (120 if t.type == "city" else 80) + nb * 60 + t.pop * 0.006
+func _ownMove(t: Dictionary, old: int, nid: int) -> void:
+	var valid: bool = PW_G == G and PW_KEY == powKey()
+	t.owner = nid
+	G.ownRev = G.get("ownRev", 0) + 1
+	if not valid: return
+	PW_KEY = powKey()
+	var c = _terrPow(t)
+	if old >= 0 and OWN_L.has(old):
+		var l: Array = OWN_L[old].duplicate()
+		l.erase(t)
+		OWN_L[old] = l
+		OWN_N[old] = OWN_N.get(old, 1) - 1
+		if PW_CACHE.has(old): PW_CACHE[old] -= c
+	if nid >= 0:
+		var l2: Array = OWN_L.get(nid, []).duplicate()
+		var i = l2.bsearch_custom(t, func(a, b): return a.id < b.id)
+		l2.insert(i, t)
+		OWN_L[nid] = l2
+		OWN_N[nid] = OWN_N.get(nid, 0) + 1
+		if PW_CACHE.has(nid): PW_CACHE[nid] += c
 
 # ==================== k3_dip.gd ====================
 # 外交（元 4048〜）：好感度・大義・通商・不可侵・従属・脅威・戦争と講和
@@ -1807,19 +1852,20 @@ func relLabelCol(a: int, b: int) -> String:
 	return REL_COL.get(relState(a, b), "#9b9484")
 
 # ---------- 脅威度 ----------
-var THR_KEY = ""
+var THR_KEY = -1
+var THR_G = null
 var THR_C = {"t": {}}
 func thrCache() -> Dictionary:
-	var k = str(G.turn) + "_" + str(G.get("ownRev", 0))
-	if THR_KEY != k:
-		THR_KEY = k
+	if THR_KEY != STRAT_REV or THR_G != G:
+		THR_KEY = STRAT_REV
+		THR_G = G
 		THR_C = {"t": {}}
 	return THR_C
 func addThreat(nid: int, v: float) -> void:
 	if nid < 0: return
 	var n = NAT(nid)
 	n.threat = clamp_f(n.get("threat", 0) + v, 0, 400)
-	THR_KEY = ""
+	THR_KEY = -1
 func threatOf(nid: int) -> float:
 	var c = thrCache()
 	if c.t.has(nid): return c.t[nid]
@@ -1865,7 +1911,7 @@ func threatLabel(v: float) -> String:
 func threatColor(v: float) -> String:
 	return "#9b9484" if v < 20 else ("#4d5666" if v < 40 else ("#c9a227" if v < 70 else "#c0504a"))
 func decayThreat() -> void:
-	THR_KEY = ""
+	THR_KEY = -1
 	for n in G.nations: n.threat = max(0.0, n.get("threat", 0) * DIP.threatDecay)
 	var t = topThreat()
 	var cur = t.id if t != null else null
@@ -2131,6 +2177,9 @@ func endWar(W, opts) -> Array:
 	if lines.size(): msg += "：" + "／".join(lines)
 	if concerns(W.sA + W.sB): logMsg(msg, "good")
 	chron(msg, W.a, "dip")
+	if newsworthy([W.a, W.b]):
+		var wn = W.a if winner == W.sA else W.b
+		headline(("%s、講和で勝利" % natLabel(wn)) if winner != null else ("%s と %s、痛み分けの講和" % [natLabel(W.a), natLabel(W.b)]), "/".join(lines) if lines.size() else "領土の変更なし")
 	invalidateSupply()
 	return lines
 func _giveTerr(t: Dictionary, n: int) -> void:
@@ -2710,12 +2759,13 @@ func vassalTurn() -> void:
 
 # ---------- 生き残りの見立て（0＝安全 / 1以上＝危機） ----------
 var DG_CACHE = {}
-var DG_KEY = ""
+var DG_KEY = -1
+var DG_G = null
 func cpuDanger(nid: int) -> float:
-	var k = powKey()
-	if DG_KEY != k:
+	if DG_KEY != STRAT_REV or DG_G != G:
 		DG_CACHE = {}
-		DG_KEY = k
+		DG_KEY = STRAT_REV
+		DG_G = G
 	if DG_CACHE.has(nid): return DG_CACHE[nid]
 	var na = NAT(nid)
 	if not na.alive:
@@ -3590,12 +3640,12 @@ func cpuVassalOffer(nid: int) -> void:
 
 # 国どうしの近さ：国境をいくつ越えれば届くか
 var HOP_G = null
-var HOP_KEY = ""
+var HOP_KEY = -1
 var HOPS = []
 func natHops(a: int, b: int) -> int:
 	if a == b: return 0
 	if a < 0 or b < 0: return 99
-	var k = str(G.get("ownRev", 0)) + "_" + str(G.edges.size())
+	var k = STRAT_REV
 	if HOP_G != G or HOP_KEY != k:
 		var n: int = G.nations.size()
 		var adj = []
@@ -3625,12 +3675,12 @@ func natHops(a: int, b: int) -> int:
 		HOP_KEY = k
 	return HOPS[a][b] if a < HOPS.size() else 99
 func natNear(a: int, b: int) -> bool: return natHops(a, b) <= DIP.reach
-var ADJ_KEY = ""
+var ADJ_KEY = -1
 var ADJ_G = null
 var ADJ_SET = {}
 func nationsAdjacent(a: int, b: int) -> bool:
 	if a == b or a < 0 or b < 0: return false
-	var k = str(G.get("ownRev", 0)) + "_" + str(G.edges.size())
+	var k = STRAT_REV
 	if ADJ_G != G or ADJ_KEY != k:
 		ADJ_SET = {}
 		ADJ_G = G
@@ -4082,6 +4132,7 @@ func endTurn() -> void:
 	UI.busy = true
 	var _t0 = Time.get_ticks_msec()
 	PROF = {}
+	stratBump()
 	for n in G.nations.size():
 		if G.over != null: break
 		if not NAT(n).alive: continue
@@ -4107,6 +4158,7 @@ func endTurn() -> void:
 	UI.actArmy = null
 	await flushDip()
 	var _t1 = Time.get_ticks_msec()
+	stratBump()
 	await yieldMaybe()
 	await production()
 	await yieldMaybe()
@@ -4117,6 +4169,7 @@ func endTurn() -> void:
 			if a != null: a.moved = false
 	siegeTurn()
 	armyUpkeepTurn()
+	stratBump()
 	occupationTurn()
 	randomEvent()
 	var nn: int = G.nations.size()
@@ -4131,8 +4184,12 @@ func endTurn() -> void:
 	checkMilestones()
 	recordHistory()
 	await yieldMaybe()
-	refreshSupply(true)
+	# 持ち主・道・首都が変わっていなければ、補給の範囲は作り直さず軍の補給だけ見直す
+	SUP_DIRTY = true
+	refreshSupply()
 	G.turn += 1
+	yearReviewTurn()
+	historyEventsTurn()
 	G.log.append({"s": "第 %d ターン" % G.turn, "cls": "sep", "t": G.turn})
 	if G.turn > TURN_MAX:
 		logMsg("ターン上限に到達しました", "war")
@@ -4556,6 +4613,8 @@ func _setBld(t: Dictionary, slot: int, k: String) -> void:
 	while t.bld.size() <= slot: t.bld.append(null)
 	t.bld[slot] = k
 
+## 戦争中の軍の経路は、この先のターン数までだけ調べる（軽さのため。遠い目標は選ばない）
+var BFS_WAR_MAX: int = int(OS.get_environment("KN_BFSMAX")) if OS.get_environment("KN_BFSMAX") != "" else 24
 func cpuTurn(nid: int) -> void:
 	refreshSupply()
 	var na = NAT(nid)
@@ -4801,7 +4860,7 @@ func cpuTurn(nid: int) -> void:
 	# 経路（行ける範囲）は要る軍の分だけ計算する。戦争中は目標選びに全軍分が要る
 	var getB = func(a):
 		if not bfsOf.has(a.idx):
-			if not bfsAt.has(a.at): bfsAt[a.at] = bfsFrom(a.at, total(a.t), nid)
+			if not bfsAt.has(a.at): bfsAt[a.at] = bfsFrom(a.at, total(a.t), nid, BFS_WAR_MAX if foes.size() else 1 << 30)
 			bfsOf[a.idx] = bfsAt[a.at]
 		return bfsOf[a.idx]
 	if foes.size():
@@ -5231,7 +5290,7 @@ func newGame(size: String) -> void:
 	beginGame()
 func _resetCaches() -> void:
 	NBR = null; NBR_G = null; SEGN_DONE = null; COAST_G = null; HOP_G = null; ADJ_G = null
-	PW_KEY = ""; THR_KEY = ""; DG_KEY = ""; SUP_TERR_KEY = ""; SUP_DIRTY = true
+	PW_KEY = -1; THR_KEY = -1; DG_KEY = -1; SUP_TERR_KEY = ""; SUP_DIRTY = true
 	FOCUS_CACHE = {}; SPROG_MEMO = {}; DIPQ = []
 	_treeCache = {}
 func beginGame() -> void:
@@ -5424,7 +5483,7 @@ const FOCUS_UNIQUE_X := 13   # 固有の枝を置く列
 
 # ---------- 初期化 ----------
 func hoiInit(g: Dictionary) -> void:
-	PW_KEY = ""
+	PW_KEY = -1
 	var gen = []
 	for sp in GENERIC_SPIRITS: gen.append(sp)
 	gen.shuffle()
@@ -5491,13 +5550,13 @@ func hoiInit(g: Dictionary) -> void:
 	# 最初の工場：首都に軍需・民需を1つずつ（工業県はもっと）
 	var G0 = G
 	G = g
-	PW_KEY = ""
+	PW_KEY = -1
 	for na in g.nations:
 		var ind = START_IND.get(na.name, [1, 1])
 		_buildFactories(na.id, "mf", ind[0], true)
 		_buildFactories(na.id, "cf", ind[1], true)
 	G = G0
-	PW_KEY = ""
+	PW_KEY = -1
 func _normPop(na: Dictionary) -> void:
 	var s = 0.0
 	for k in IDEO_KEYS: s += max(0.0, na.ipop.get(k, 0.0))
@@ -5791,6 +5850,8 @@ func _applyFocus(na: Dictionary, f: Dictionary) -> void:
 	var e: Dictionary = f.e
 	var nid: int = na.id
 	if e.has("rm"): _rmSpirit(na, e.rm)
+	# 方針で内戦が決着した（スペイン内戦など）
+	if e.get("rm", "") == "内戦" and na.has("civil"): endCivilWarBy(na, f.n)
 	if e.has("sp"): _addSpirit(na, e.sp[0], e.sp[1], e.sp[2], "方針")
 	if e.has("stab"): na.stab = clamp_f(na.stab + e.stab, 0, 100)
 	if e.has("ws"): na.ws = clamp_f(na.ws + e.ws, 0, 100)
@@ -6606,9 +6667,10 @@ func occupationTurn() -> void:
 ## 安定度がとても低い時に政変が起きると、すぐには政権が変わらず内戦になる。
 ## 内戦の間は兵の生産・ゴールドが落ち、一部の領地が混乱する。終わる時、支持の多い側が政権を取る
 const CIVIL_TURNS := 12
-func startCivilWar(na: Dictionary, rebel: String) -> void:
+func startCivilWar(na: Dictionary, rebel: String, endTurn := -1) -> void:
 	if na.has("civil"): return
-	na.civil = {"side": rebel, "end": G.turn + CIVIL_TURNS}
+	na.civil = {"side": rebel, "end": endTurn if endTurn > 0 else G.turn + CIVIL_TURNS}
+	_rmSpirit(na, "内戦")
 	_addSpirit(na, "内戦", "兵の生産 -30%・ゴールド -30%・安定度 -10", {"troop": -0.30, "gold": -0.30, "stab": -10.0}, "内戦")
 	var own = ownList(na.id)
 	var cap = T(na.capital)
@@ -6622,6 +6684,20 @@ func startCivilWar(na: Dictionary, rebel: String) -> void:
 	logMsg(msg, "war")
 	chron(msg, na.id, "war")
 	addTension(4)
+## 方針で内戦が決着した時（政権の交代は方針の効果のほうで行う）
+func endCivilWarBy(na: Dictionary, why: String) -> void:
+	na.erase("civil")
+	headline("%s の内戦、終わる" % natLabel(na.id), why)
+	chron("%s の内戦が終わる（%s）" % [na.name, why], na.id, "war")
+## 歴史イベント：1936年7月、スペイン（京都）で内戦が始まる（終わりは方針「内戦の行方」の結果で決まる）
+func historyEventsTurn() -> void:
+	if G.get("size") != "japan" or G.turn != 7: return
+	var sp = natByName("京都府")
+	if sp < 0 or not NAT(sp).alive or NAT(sp).has("civil"): return
+	var has = false
+	for s in NAT(sp).spirits:
+		if s.n == "内戦": has = true
+	if has: startCivilWar(NAT(sp), "fascism", G.turn + 999)
 func civilWarTurn(na: Dictionary) -> void:
 	var cw = na.get("civil")
 	if cw == null: return
@@ -6647,15 +6723,33 @@ func civilWarTurn(na: Dictionary) -> void:
 ## 軍需品に余裕のある国が、戦争中の同じ陣営・同じ思想の国へ軍需品を送る
 func supportTurn(na: Dictionary) -> void:
 	var nid: int = na.id
+	# 義勇軍も軍需品も送れない国は調べない（軽さのため）
+	var canVol: bool = na.get("ws", 0) >= 30 and total(na.stock) > 4000
+	var canLL: bool = na.get("eq", 0) > 9000
+	if not canVol and not canLL: return
 	if not na.has("supCool"): na.supCool = {}
 	var war = inWar(nid)
+	if war and not canLL: return
 	for o in G.nations:
-		if not o.alive or o.id == nid or not inWar(o.id) or atWar(nid, o.id): continue
+		if not o.alive or o.id == nid or atWar(nid, o.id): continue
 		if na.supCool.get(o.id, -99) > G.turn: continue
-		var sameIdeo: bool = o.get("ideo") == na.get("ideo")
+		var cw = o.get("civil")
+		# 内戦中の国：反乱側と同じ思想の国は反乱側へ、政府と同じ思想の国は政府へ義勇軍を送る
+		var rebelSide: bool = cw != null and cw.side == na.get("ideo")
+		var sameIdeo: bool = o.get("ideo") == na.get("ideo") or rebelSide
 		var sameFac = sameFaction(nid, o.id)
 		if not sameIdeo and not sameFac: continue
-		if not natNear(nid, o.id): continue
+		if not natNear(nid, o.id) or (cw == null and not inWar(o.id)): continue
+		if rebelSide:
+			if canVol and not war and randf() < 0.12:
+				o.ipop[cw.side] = o.ipop.get(cw.side, 0.0) + 3.0
+				_normPop(o)
+				na.supCool[o.id] = G.turn + 12
+				var m0 = "%s が %s の %s 派へ義勇軍を送る" % [na.name, o.name, IDEO[cw.side].n]
+				if concerns([nid, o.id]): logMsg(m0)
+				chron(m0, nid, "dip")
+				if newsworthy([nid]): headline("%s、%s の内戦に義勇軍" % [natLabel(nid), natLabel(o.id)], "%s 派を支援する" % IDEO[cw.side].n)
+			continue
 		# 義勇軍：自分は戦争しておらず、戦争支持が 30 以上
 		if not war and sameIdeo and na.ws >= 30 and total(na.stock) > 4000 and randf() < 0.10:
 			var sent = 0
@@ -6714,7 +6808,41 @@ func factionApplyTurn(na: Dictionary) -> void:
 signal news(head: String, sub: String)
 func headline(head: String, sub := "") -> void:
 	if G == null: return
+	# 見逃しても後で読めるように、見出しを綴っておく（新しい60件）
+	if not G.has("news"): G.news = []
+	G.news.append({"t": G.turn, "h": head, "s": sub})
+	if G.news.size() > 60: G.news = G.news.slice(-60)
 	news.emit(head, sub)
+
+# ---------- 年の振り返り ----------
+## 毎年1月に、前の年に最も版図を広げた国・失った国と、宣戦の数を見出しにする
+func yearReviewTurn() -> void:
+	if (G.turn - 1) % 12 != 0: return
+	var now = {}
+	for na in G.nations:
+		if na.alive: now[na.id] = ownCount(na.id)
+	var base: Dictionary = G.get("yearBase", {})
+	var decl: int = G.get("declN", 0) - G.get("yearDecl", 0)
+	if base.size():
+		var up = -1
+		var upN = 0
+		var dn = -1
+		var dnN = 0
+		for k in base:
+			var d: int = now.get(int(k), 0) - int(base[k])
+			if d > upN:
+				upN = d
+				up = int(k)
+			if d < dnN:
+				dnN = d
+				dn = int(k)
+		var parts = []
+		if up >= 0: parts.append("躍進：%s（+%d）" % [natLabel(up), upN])
+		if dn >= 0: parts.append("後退：%s（%d）" % [natLabel(dn), dnN] if NAT(dn).alive else "滅亡：%s" % natLabel(dn))
+		parts.append("宣戦 %d 回" % decl)
+		headline("%d年を振り返る" % (int(curYear()) - 1), "・".join(parts))
+	G.yearBase = now
+	G.yearDecl = G.get("declN", 0)
 ## 大国（固有の大きな方針ツリーを持つ国）か、選んだ国が関わるか
 func newsworthy(ids: Array) -> bool:
 	for i in ids:
@@ -6901,9 +7029,9 @@ const TREE_CHN := [
 ]
 const TREE_SPA := [
 	{"id": "e1", "n": "内戦の行方", "x": 1, "y": 0, "t": 4, "req": [], "e": {"ws": 10}},
-	{"id": "e2", "n": "共和派の勝利", "x": 0, "y": 1, "t": 7, "req": ["e1"], "ex": ["e3", "e4"], "e": {"rm": "内戦", "stab": 10, "ideo": ["democracy", 25]}},
-	{"id": "e3", "n": "国民派の勝利", "w": 2.0, "x": 1, "y": 1, "t": 7, "req": ["e1"], "ex": ["e2", "e4"], "e": {"rm": "内戦", "gov": "fascism"}},
-	{"id": "e4", "n": "人民の戦い", "x": 2, "y": 1, "t": 7, "req": ["e1"], "ex": ["e2", "e3"], "e": {"rm": "内戦", "gov": "communism"}},
+	{"id": "e2", "n": "共和派の勝利", "x": 0, "y": 1, "t": 14, "req": ["e1"], "ex": ["e3", "e4"], "e": {"rm": "内戦", "stab": 10, "ideo": ["democracy", 25]}},
+	{"id": "e3", "n": "国民派の勝利", "w": 2.0, "x": 1, "y": 1, "t": 14, "req": ["e1"], "ex": ["e2", "e4"], "e": {"rm": "内戦", "gov": "fascism"}},
+	{"id": "e4", "n": "人民の戦い", "x": 2, "y": 1, "t": 14, "req": ["e1"], "ex": ["e2", "e3"], "e": {"rm": "内戦", "gov": "communism"}},
 	{"id": "e6", "n": "戦後の復興", "x": 0, "y": 2, "t": 6, "req": ["e2", "e4"], "e": {"cf": 2, "mf": 1}},
 	{"id": "e5", "n": "イベリアの統一", "x": 1, "y": 2, "t": 6, "req": ["e3"], "e": {"claimOn": ["滋賀県"], "joinFac": "枢軸"}},
 ]

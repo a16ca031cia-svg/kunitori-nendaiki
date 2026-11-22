@@ -115,6 +115,9 @@ func endWar(W, opts) -> Array:
 	if lines.size(): msg += "：" + "／".join(lines)
 	if concerns(W.sA + W.sB): logMsg(msg, "good")
 	chron(msg, W.a, "dip")
+	if newsworthy([W.a, W.b]):
+		var wn = W.a if winner == W.sA else W.b
+		headline(("%s、講和で勝利" % natLabel(wn)) if winner != null else ("%s と %s、痛み分けの講和" % [natLabel(W.a), natLabel(W.b)]), "/".join(lines) if lines.size() else "領土の変更なし")
 	invalidateSupply()
 	return lines
 func _giveTerr(t: Dictionary, n: int) -> void:

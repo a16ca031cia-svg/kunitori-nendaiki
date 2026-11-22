@@ -701,7 +701,9 @@ func natRel(from: int, nid: int) -> String:
 func _drawRel() -> void:
 	if S.G == null: return
 	var sel = S.UI.selNat
-	if sel == null or sel < 0: return
+	if sel == null or sel < 0:
+		_drawFront()
+		return
 	# 境目の線は国境と同じものを使い回し、本体の線描画でまとめて描く（自国は太く、ほかは同じ太さ）
 	var Ps := PackedVector2Array()
 	var Cs := PackedColorArray()
@@ -742,6 +744,7 @@ func _drawRel() -> void:
 	if Ps.size():
 		RenderingServer.canvas_item_add_multiline(ci, Ps, Cs, 4.5 / vs)
 	dash.flush(ci)
+	_drawFront()
 func _dashed(b, ln: PackedVector2Array, col: Color, w: float, on: float, off: float) -> void:
 	var acc = 0.0
 	var drawing = true
@@ -1410,3 +1413,23 @@ func _cpoly(c: CanvasItem, pts: PackedVector2Array, col: Color) -> void:
 		idx = Geometry2D.triangulate_polygon(pts)
 		if idx.is_empty(): return
 	RenderingServer.canvas_item_add_triangle_array(c.get_canvas_item(), idx, pts, _fillCols(pts.size(), col))
+## 前線：戦争中の国どうしの境を赤く描く（どこで戦っているかが一目で分かるように。選んだ国の線より上に重ねる）
+var _frKey = ""
+var _frP := PackedVector2Array()
+func _drawFront() -> void:
+	var k = "%d_%s_%d" % [S.G.get("ownRev", 0), str(S.G.wars.keys()), S.G.turn]
+	if k != _frKey or G_ != S.G:
+		_frKey = k
+		_frP = PackedVector2Array()
+		if S.G.wars.size():
+			for t in S.G.terrs:
+				if t.owner < 0: continue
+				for i in t.segs.size():
+					var j: int = t.segN[i]
+					if j < 0 or j < t.id: continue
+					var o: int = S.T(j).owner
+					if o >= 0 and o != t.owner and S.atWar(t.owner, o): _frP.append_array(_pairsOf(t, i))
+	if _frP.is_empty(): return
+	var ci = relL.get_canvas_item()
+	RenderingServer.canvas_item_add_multiline(ci, _frP, PackedColorArray([Color(0.12, 0.03, 0.02, 0.75)]), 7.0 / vs)
+	RenderingServer.canvas_item_add_multiline(ci, _frP, PackedColorArray([Color(0.92, 0.24, 0.18, 0.95)]), 3.4 / vs)

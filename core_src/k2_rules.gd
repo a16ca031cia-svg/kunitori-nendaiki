@@ -111,7 +111,7 @@ func _pfPrep() -> void:
 		PF_OWN_KEY = ok
 ## 経路探索：かかるターン数が最短の道（重みが小さな整数なので、ターン数ごとの箱で順に広げる）
 ## 返り値 d[領地]＝かかるターン（届かなければ -1）、prev＝ひとつ前、n＝届く領地の数
-func bfsFrom(start: int, _size = null, nid = null) -> Dictionary:
+func bfsFrom(start: int, _size = null, nid = null, maxD := 1 << 30) -> Dictionary:
 	_pfPrep()
 	var n: int = G.terrs.size()
 	var dist := PackedInt32Array()
@@ -152,6 +152,7 @@ func bfsFrom(start: int, _size = null, nid = null) -> Dictionary:
 				if f & 1 and c < 2: c = 2
 				if f & 2 and PF_INF3[to] == 0: c += 1
 				var nd: int = d + c
+				if nd > maxD: continue
 				var od: int = dist[to]
 				if od >= 0 and od <= nd: continue
 				if od < 0: reach += 1
@@ -194,7 +195,7 @@ func refreshSupply(force := false) -> void:
 	SUP_DIRTY = false
 	var caps := []
 	for n in G.nations: caps.append(n.capital if n.alive else -1)
-	var key := str(G.get("ownRev", 0)) + "_" + str(G.get("roadRev", 0)) + "_" + str(caps)
+	var key := "%d_%d_%s" % [G.get("ownRev", 0), G.get("roadRev", 0), caps]
 	var allSets := true
 	for na in G.nations:
 		if not (na.get("supSet") is Dictionary): allSets = false
@@ -224,8 +225,20 @@ func refreshSupply(force := false) -> void:
 
 # ---------- 国力の目安 ----------
 var PW_CACHE := {}
-var PW_KEY := ""
-func powKey() -> String: return str(G.turn) + "_" + str(G.get("ownRev", 0))
+var PW_KEY := -1
+var PW_G = null
+## 鍵は整数（文字列を毎回作ると重い）
+func powKey() -> int: return G.turn * 1000000 + int(G.get("ownRev", 0))
+## 戦略の見積もり（隣り合い・距離・脅威・危険度）の鍵：ターンの区切りごとに1回だけ作り直す（占領のたびには作り直さない。国が滅んだ時は作り直す）
+var STRAT_REV := 0
+var _sbOwn := -1
+var _sbTurn := -1
+func stratBump() -> void:
+	var o: int = int(G.get("ownRev", 0))
+	if o == _sbOwn and G.turn == _sbTurn: return
+	_sbOwn = o
+	_sbTurn = G.turn
+	STRAT_REV += 1
 ## 国力：鍵（ターン・持ち主の変化）が変わったら、全領地を1回だけなめて全部の国をまとめて計算する
 var OWN_N := {}
 var OWN_L := {}
@@ -235,6 +248,7 @@ func _powAll() -> void:
 	PW_CACHE = {}
 	OWN_N = {}
 	PW_KEY = powKey()
+	PW_G = G
 	var acc := {}
 	for t in G.terrs:
 		var o: int = t.owner
@@ -249,7 +263,7 @@ func _powAll() -> void:
 	for na in G.nations:
 		PW_CACHE[na.id] = round(acc.get(na.id, 0.0) + nationTroops(na.id) * 0.6 + na.gold * 0.05)
 func nationPower(nid: int) -> float:
-	if PW_KEY != powKey(): _powAll()
+	if PW_KEY != powKey() or PW_G != G: _powAll()
 	if PW_CACHE.has(nid): return PW_CACHE[nid]
 	var v := nationPowerCalc(nid)
 	PW_CACHE[nid] = v
@@ -261,11 +275,11 @@ func ownList(nid: int) -> Array:
 		for t in G.terrs:
 			if t.owner == nid: r.append(t)
 		return r
-	if PW_KEY != powKey(): _powAll()
+	if PW_KEY != powKey() or PW_G != G: _powAll()
 	return OWN_L.get(nid, [])
 ## 領地の数（国力と同じ鍵で覚えておく）
 func ownCount(nid: int) -> int:
-	if PW_KEY != powKey(): _powAll()
+	if PW_KEY != powKey() or PW_G != G: _powAll()
 	return OWN_N.get(nid, 0)
 func nationPowerCalc(nid: int) -> float:
 	var p := 0.0
@@ -497,8 +511,7 @@ func capture(tid: int, nid: int, _byArmy = null) -> void:
 	var t := T(tid)
 	var old: int = t.owner
 	if old == nid: return
-	t.owner = nid
-	G.ownRev = G.get("ownRev", 0) + 1
+	_ownMove(t, old, nid)
 	var nm: String = NAT(nid).name
 	var on: String = NAT(old).name if old >= 0 else "無主の地"
 	logWar("%s が %s を占領しました（旧領主 %s）" % [nm, t.name, on], [nid, old], "good" if nid == followNat() else "war")
@@ -514,6 +527,9 @@ func capture(tid: int, nid: int, _byArmy = null) -> void:
 		t.former = old
 		t.formerAt = G.turn
 		if t.cap: t.wasCap = old
+		# 首都の陥落は大きな見出しに
+		if t.cap and t.id == NAT(old).get("capital", -1) and newsworthy([old, nid]):
+			headline("%s の首都 %s 陥落" % [natLabel(old), t.name], "%s 軍が入城する" % natLabel(nid))
 	if old >= 0 and atWar(nid, old) and warOf(nid, old):
 		var wid := warOf(nid, old)
 		if t.get("wTag") != wid:
@@ -565,6 +581,7 @@ func checkNations() -> void:
 		if not na.alive: continue
 		if cnt.get(na.id, 0) == 0:
 			na.alive = false
+			STRAT_REV += 1
 			for i in na.armies.size(): na.armies[i] = null; ARMY_REV += 1
 			na.lord = null
 			na.diedAt = G.turn
@@ -764,3 +781,31 @@ func flashTerr(tid: int) -> void:
 	fx.emit("flash", tid)
 func invalidateTerr(tid: int) -> void: map_changed.emit("terr", tid)
 func invalidateMap() -> void: map_changed.emit("all", null)
+
+## 占領で持ち主が1つ変わる時：全領地をなめ直さず、2国の一覧・数・国力だけを直す（軽さのため）
+## 一覧は作り直して入れ替える（ほかの所で一覧を回している最中でも壊れないように）
+func _terrPow(t: Dictionary) -> float:
+	var nb := 0
+	for b in t.bld:
+		if b: nb += 1
+	return t.dev * (120 if t.type == "city" else 80) + nb * 60 + t.pop * 0.006
+func _ownMove(t: Dictionary, old: int, nid: int) -> void:
+	var valid: bool = PW_G == G and PW_KEY == powKey()
+	t.owner = nid
+	G.ownRev = G.get("ownRev", 0) + 1
+	if not valid: return
+	PW_KEY = powKey()
+	var c := _terrPow(t)
+	if old >= 0 and OWN_L.has(old):
+		var l: Array = OWN_L[old].duplicate()
+		l.erase(t)
+		OWN_L[old] = l
+		OWN_N[old] = OWN_N.get(old, 1) - 1
+		if PW_CACHE.has(old): PW_CACHE[old] -= c
+	if nid >= 0:
+		var l2: Array = OWN_L.get(nid, []).duplicate()
+		var i := l2.bsearch_custom(t, func(a, b): return a.id < b.id)
+		l2.insert(i, t)
+		OWN_L[nid] = l2
+		OWN_N[nid] = OWN_N.get(nid, 0) + 1
+		if PW_CACHE.has(nid): PW_CACHE[nid] += c

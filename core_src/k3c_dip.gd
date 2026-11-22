@@ -196,12 +196,13 @@ func vassalTurn() -> void:
 
 # ---------- 生き残りの見立て（0＝安全 / 1以上＝危機） ----------
 var DG_CACHE := {}
-var DG_KEY := ""
+var DG_KEY := -1
+var DG_G = null
 func cpuDanger(nid: int) -> float:
-	var k := powKey()
-	if DG_KEY != k:
+	if DG_KEY != STRAT_REV or DG_G != G:
 		DG_CACHE = {}
-		DG_KEY = k
+		DG_KEY = STRAT_REV
+		DG_G = G
 	if DG_CACHE.has(nid): return DG_CACHE[nid]
 	var na := NAT(nid)
 	if not na.alive:

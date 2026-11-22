@@ -458,12 +458,12 @@ func cpuVassalOffer(nid: int) -> void:
 
 # 国どうしの近さ：国境をいくつ越えれば届くか
 var HOP_G = null
-var HOP_KEY := ""
+var HOP_KEY := -1
 var HOPS := []
 func natHops(a: int, b: int) -> int:
 	if a == b: return 0
 	if a < 0 or b < 0: return 99
-	var k := str(G.get("ownRev", 0)) + "_" + str(G.edges.size())
+	var k := STRAT_REV
 	if HOP_G != G or HOP_KEY != k:
 		var n: int = G.nations.size()
 		var adj := []
@@ -493,12 +493,12 @@ func natHops(a: int, b: int) -> int:
 		HOP_KEY = k
 	return HOPS[a][b] if a < HOPS.size() else 99
 func natNear(a: int, b: int) -> bool: return natHops(a, b) <= DIP.reach
-var ADJ_KEY := ""
+var ADJ_KEY := -1
 var ADJ_G = null
 var ADJ_SET := {}
 func nationsAdjacent(a: int, b: int) -> bool:
 	if a == b or a < 0 or b < 0: return false
-	var k := str(G.get("ownRev", 0)) + "_" + str(G.edges.size())
+	var k := STRAT_REV
 	if ADJ_G != G or ADJ_KEY != k:
 		ADJ_SET = {}
 		ADJ_G = G

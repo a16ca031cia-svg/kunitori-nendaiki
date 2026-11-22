@@ -92,6 +92,12 @@ func _ready() -> void:
 	S.bootMark("タイトル画面が描かれた")
 	_prefetchJpMaps()
 	if args.has("--autostart"): _newGame("japan")
+	# 確認用：--shot ターン数 保存先 [国の番号|war] … 早送りして画面を画像に保存して終わる
+	var sh = args.find("--shot")
+	if sh >= 0:
+		AudioServer.set_bus_mute(0, true)
+		await _shot(int(args[sh + 1]), args[sh + 2], args[sh + 3] if args.size() > sh + 3 else "")
+		get_tree().quit()
 	# 確認用：URL に mute を付けると音を消す（保存した好みは変えない）
 	if OS.has_feature("web") and str(JavaScriptBridge.eval("location.hash", true)).contains("mute"): AudioServer.set_bus_mute(0, true)
 	if OS.has_feature("web"): _debugHash()
@@ -280,6 +286,8 @@ func _buildUI() -> void:
 	logBox.custom_minimum_size = Vector2(430, 0)
 	logBox.add_theme_constant_override("outline_size", 4)
 	logBox.add_theme_color_override("font_outline_color", Color(0.07, 0.08, 0.1, 0.85))
+	# 地図の上でも読めるように、薄い下地を敷く（出来事が無い時は隠す）
+	logBox.add_theme_stylebox_override("normal", _sb(Color(0.07, 0.08, 0.1, 0.74), Color(1, 1, 1, 0.08), 1, 4, 8))
 	mapWrap.add_child(logBox)
 	var placeLog = func(): logBox.position = Vector2(10, mapWrap.size.y - logBox.size.y - 10)
 	mapWrap.resized.connect(placeLog)
@@ -391,7 +399,7 @@ func _showTitle() -> void:
 	rule.custom_minimum_size = Vector2(0, 1)
 	box.add_child(rule)
 	var p = Label.new()
-	p.text = "中世・群雄争覇のシミュレーション — 国々の興亡を見届ける"
+	p.text = "1936年、国々が覇を競う — 列強の興亡を見届ける観戦シミュレーション"
 	p.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	p.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	p.add_theme_color_override("font_color", C_MUTED)
@@ -575,6 +583,7 @@ const LOG_BIG := ["宣戦", "滅亡", "降伏", "講和", "和平", "蜂起", "�
 func _renderLog() -> void:
 	if S.G == null or not S.UI.logOn:
 		logBox.text = ""
+		logBox.visible = false
 		return
 	var n = 3 if size.x < 640 else 5
 	var sel = S.UI.selNat
@@ -599,6 +608,7 @@ func _renderLog() -> void:
 		elif l.cls == "good": c = Color("#b5d6a8")
 		out.append("[font_size=11][color=#9b9484]%dT[/color][/font_size] %s" % [l.get("t", 0), _cs(_esc(l.s), c)])
 	logBox.text = "\n".join(out)
+	logBox.visible = out.size() > 0
 func _setPhase(nid, sub: String) -> void:
 	_paceLbl = ("%s:%s" % [S.NAT(nid).name, sub]) if nid != null else "ターン終わり"
 	if nid == null:
@@ -767,13 +777,15 @@ var _newsQ = []
 var _newsBusy = false
 var _newsBox: PanelContainer = null
 func _queueNews(head: String, sub: String) -> void:
-	_newsQ.append([head, sub, S.dateStr(S.G.turn) if S.G != null else ""])
+	_newsQ.append([head, sub, S.dateStr(S.G.turn) if S.G != null else "", S.G.turn if S.G != null else 0])
 	while _newsQ.size() > 4: _newsQ.pop_front()
 	if not _newsBusy: _runNews()
 func _runNews() -> void:
 	_newsBusy = true
 	while _newsQ.size():
 		var n = _newsQ.pop_front()
+		# 2ターン以上前の見出しは飛ばす（早送りの後などに古い話が出ないように。記録の「新聞」で読める）
+		if S.G != null and S.G.turn - n[3] > 2: continue
 		if _newsBox == null or not is_instance_valid(_newsBox):
 			_newsBox = PanelContainer.new()
 			var sb = _sb(Color("#e9e1cf"), Color("#3a3020"), 2, 2, 10)
@@ -816,7 +828,8 @@ func _renderSide() -> void:
 		await get_tree().process_frame
 		if is_instance_valid(sideScroll): sideScroll.scroll_vertical = keep
 func _h3(t: String, col := "eae4d6") -> String: return "[font=res://fonts/ShipporiMinchoB1-SemiBold.ttf][font_size=19][color=#%s]%s[/color][/font_size][/font]" % [col, t]
-func _chip(t: String, col := "9b9484") -> String: return " [bgcolor=#252b38][color=#%s][font_size=11] %s [/font_size][/color][/bgcolor]" % [col, t]
+## 見出しの横の小さな札（背景色の箱は見出しの行の高さで縦に伸びてしまうので、文字だけにする）
+func _chip(t: String, col := "9b9484") -> String: return "  [font_size=12][color=#%s]%s[/color][/font_size]" % [col, t]
 func _lbl(t: String, col := "9b9484") -> String: return "\n[font_size=11][color=#%s]%s[/color][/font_size]" % [col, t]
 func _kv(rows: Array) -> String:
 	var s = "[table=2]"
@@ -882,6 +895,13 @@ func worldPanel() -> String:
 		for m in F.members:
 			if S.NAT(m).alive: nmem += 1
 		s += "[color=#b9a2e6][b]%s[/b][/color]　盟主 %s [color=#9b9484][font_size=11]（%dか国）[/font_size][/color]\n" % [_esc(F.name), _natLink(F.leader), nmem]
+	# 国盗り新報：見逃した見出しをここで読み返せる（新しい順に6件）
+	var nws: Array = S.G.get("news", [])
+	if nws.size():
+		s += _lbl("国盗り新報（最近の見出し）") + "\n"
+		for k in min(6, nws.size()):
+			var e = nws[nws.size() - 1 - k]
+			s += "[color=#6f6a5e][font_size=11]%dT[/font_size][/color] [color=#e9e1cf]%s[/color]%s\n" % [e.t, _esc(e.h), (" [color=#9b9484][font_size=11]%s[/font_size][/color]" % _esc(e.s)) if e.s != "" else ""]
 	s += "\n[color=#6f6a5e][font_size=12]国の名前か地図の国を押すと、その国の全体と情報が表示されます。選んだ国に関わる戦いや外交だけが知らされます。キー操作は「?」で確認できます。[/font_size][/color]"
 	return s
 func natPanel(nid: int) -> String:
@@ -1235,7 +1255,7 @@ func openRecord(tab := "") -> void:
 	var box = VBoxContainer.new()
 	box.add_theme_constant_override("separation", 8)
 	var tabs = HBoxContainer.new()
-	for tb in [["chron", "年代記"], ["stats", "統計"]]:
+	for tb in [["chron", "年代記"], ["news", "新聞"], ["stats", "統計"]]:
 		var key: String = tb[0]
 		tabs.add_child(_btn(tb[1], func(): openRecord(key), recTab == key))
 	box.add_child(tabs)
@@ -1264,6 +1284,22 @@ func openRecord(tab := "") -> void:
 		box.add_child(_bodyText(_chronRows(list.slice(-300)) + "\n[font_size=11][color=#9b9484]全 %d 件を記録しています（古い記録から順に整理されます）。[/color][/font_size]" % S.G.chron.size()))
 		modal("記録", box, [_btn("閉じる", closeModal)], 760)
 	else:
+		if recTab == "news":
+			var nws: Array = S.G.get("news", [])
+			var ns := ""
+			for k in nws.size():
+				var e = nws[nws.size() - 1 - k]
+				ns += "[color=#9b9484][font_size=11]%s（%dT）[/font_size][/color]
+[font=res://fonts/ShipporiMinchoB1-SemiBold.ttf][font_size=17][color=#eae4d6]%s[/color][/font_size][/font]%s
+
+" % [S.dateStr(e.t), e.t, _esc(e.h), ("
+[color=#b8b0a0]%s[/color]" % _esc(e.s)) if e.s != "" else ""]
+			if ns == "": ns = "[color=#9b9484]まだ大きな出来事はありません[/color]"
+			box.add_child(_bodyText("[color=#9b9484][font_size=11]━ 国盗り新報 ━　新しい順（最近の60件）[/font_size][/color]
+
+" + ns))
+			modal("記録", box, [_btn("閉じる", closeModal)], 760)
+			return
 		box.add_child(_bodyText(_statsText()))
 		var ch = preload("res://scripts/ui/hist_chart.gd").new()
 		ch.font = fontR
@@ -1584,6 +1620,8 @@ func _sim(size_: String, turns: int) -> void:
 		if S.lordOf(n.id) != null: vass += 1
 	for t in S.G.terrs: pop += t.pop
 	print("SIMTOTAL ms=", SIMT)
+	print("NEWS n=", S.G.get("news", []).size())
+	for e in S.G.get("news", []).slice(-25): print("  NEWS ", e.t, " ", e.h, " ／ ", e.s)
 	print("STATS alive=", alive2, " wars=", S.G.wars.size(), " vass=", vass, " pol=", pol, " troopsAvg=", troops / alive2, " foodAvg=", food / alive2, " goldAvg=", gold / alive2, " pop=", pop)
 	for c in S.G.chron.slice(-15): print("  ", c.t, " ", c.s)
 	var ks = S.PROF.keys()
@@ -1612,8 +1650,11 @@ func _debugHash() -> void:
 	S.CFG.showDip = false
 	S.CFG.showCpuBattle = false
 	S.setSpeed(3, false)
+	var ttLog: bool = q.has("tt")
 	for i in int(q.get("ff", "0")):
+		var _t0 = Time.get_ticks_msec()
 		await S.endTurn()
+		if ttLog: print("TT turn=%d ms=%d wars=%d" % [S.G.turn, Time.get_ticks_msec() - _t0, S.G.wars.size()])
 		if S.G.over != null: break
 	# 確認用なので、早送りの後は既定の表示（戦闘・外交の知らせあり・普通の速さ）に戻す
 	S.CFG.showDip = true
@@ -1880,8 +1921,9 @@ func _balance(runs: int, turns: int) -> void:
 
 # ---------- 政体・国家方針（HOI4風） ----------
 func _meter(v: float, col: String) -> String:
+	# 文字で描く目盛り（背景色の箱は行の高さがずれて隣の行に重なるため）
 	var n = int(round(clamp(v, 0, 100) / 10.0))
-	return _bar(col, max(0, n)) + "[bgcolor=#252b38][font_size=7]%s[/font_size][/bgcolor]" % "　".repeat(10 - n)
+	return "[font_size=9][color=%s]%s[/color][color=#3a3f4c]%s[/color][/font_size]" % [col, "■".repeat(n), "■".repeat(10 - n)]
 func _hoiPanel(nid: int) -> String:
 	var na = S.NAT(nid)
 	if not na.has("ideo"): return ""
@@ -1898,7 +1940,7 @@ func _hoiPanel(nid: int) -> String:
 	var stc = "6d9c63" if na.stab >= 60 else ("d29b3c" if na.stab >= 40 else "c0504a")
 	rows.append(["安定度", "%s [color=#%s]%d%%[/color] [font_size=11][color=#9b9484]生産 ×%.2f[/color][/font_size]" % [_meter(na.stab, "#" + stc), stc, int(round(na.stab)), S.stabMul(na)]])
 	var ok = na.ws >= I.wsNeed
-	rows.append(["戦争支持", "%s [color=#%s]%d%%[/color] [font_size=11][color=#9b9484]宣戦に %d%% 要る%s[/color][/font_size]" % [_meter(na.ws, "#c0504a"), "e6c95a" if ok else "9b9484", int(round(na.ws)), I.wsNeed, "・大義も要る" if na.ideo == "democracy" else ""]])
+	rows.append(["戦争支持", "%s [color=#%s]%d%%[/color] [font_size=11][color=#9b9484]宣戦に %d%% 要る%s[/color][/font_size]" % [_meter(na.ws, "#c0504a"), "e6c95a" if ok else "9b9484", int(round(na.ws)), int(S.wsNeedOf(na)), "・大義も要る" if na.ideo == "democracy" else ""]])
 	if na.has("leader"):
 		var ltr = S.leaderTrait(na)
 		rows.append(["指導者", "%s %s [font_size=11][color=#9b9484]%s[/color][/font_size]" % [S.leaderTitle(na), _esc(na.leader.n), ("（%s：%s）" % [ltr.n, ltr.d]) if ltr != null else ""]])
@@ -2206,3 +2248,30 @@ func _uiT(k: String, us: int) -> void:
 	if us > 30000: r[2] += 1
 	UIT[k] = r
 var SIMT = 0
+## 確認用：早送りしてから画面を画像に保存する（--shot）
+func _shot(turns: int, path: String, sel: String) -> void:
+	seed(int(OS.get_environment("KN_SEED")) if OS.get_environment("KN_SEED") != "" else 4242)
+	await get_tree().process_frame
+	await _newGame("japan")
+	S.CFG.showDip = false
+	S.CFG.showCpuBattle = false
+	S.setSpeed(3, false)
+	for i in turns:
+		await S.endTurn()
+		if S.G.over != null: break
+	S.CFG.showDip = true
+	S.CFG.showCpuBattle = true
+	if sel == "war":
+		for W in S.G.wars.values():
+			selectNation(W.a, true)
+			break
+	elif sel.is_valid_int(): selectNation(int(sel), true)
+	elif sel.contains(":") and sel.get_slice(":", 0).is_valid_int(): selectNation(int(sel.get_slice(":", 0)), true)
+	elif sel.begins_with("rec:"): openRecord(sel.substr(4))
+	refresh()
+	for i in 60: await get_tree().process_frame
+	if sel.contains(":") and sel.get_slice(":", 1).is_valid_int(): sideScroll.scroll_vertical = int(sel.get_slice(":", 1))
+	for i in 30: await get_tree().process_frame
+	var img = get_viewport().get_texture().get_image()
+	img.save_png(path)
+	print("SHOT ", path, " T", S.G.turn)
